@@ -1172,7 +1172,22 @@ function CodeChallenge({ a, t, showXp, boom, next }) {
 
   return (
     <div className="acard ide-card">
-      <div className="acard-head"><h3>🐍 {a.title}</h3><div className="challenge-dots">{a.challenges.map((_,i)=><span key={i} className={`cdot${passed[i]?' cdone':''}${i===curIdx?' cactive':''}`} onClick={()=>{setCurIdx(i);setOutput('');setError('');setShowHint(false);}}>{i+1}</span>)}</div></div>
+      <div className="acard-head">
+        <h3>🐍 {a.title}</h3>
+        <div className="challenge-nav">
+          <span className="cnav-label">Challenge {curIdx+1} of {a.challenges.length}</span>
+          <div className="challenge-dots">
+            {a.challenges.map((_,i)=>(
+              <span
+                key={i}
+                className={`cdot${passed[i]?' cdone':''}${i===curIdx?' cactive':''}`}
+                title={`Jump to challenge ${i+1}`}
+                onClick={()=>{setCurIdx(i);setOutput('');setError('');setShowHint(false);}}
+              >{passed[i] ? '✓' : i+1}</span>
+            ))}
+          </div>
+        </div>
+      </div>
 
       <div className="ide-instructions">
         <p>{ch.instructions}</p>
@@ -1201,7 +1216,16 @@ function CodeChallenge({ a, t, showXp, boom, next }) {
         {output && !passed[curIdx] && ch.expected_output && <div className="out-try">Not quite! Expected: <code>{ch.expected_output.trim()}</code></div>}
       </div>
 
-      {allDone && <div className="gdone">{t.correct} All challenges done!<button className="btn-go" onClick={next}>Next →</button></div>}
+      {passed[curIdx] && curIdx < a.challenges.length - 1 && (
+        <div className="next-challenge">
+          <p>🎉 Nice! Ready for the next one?</p>
+          <button className="btn-go big-btn" onClick={()=>{setCurIdx(curIdx+1);setOutput('');setError('');setShowHint(false);}}>
+            Next Challenge →
+          </button>
+        </div>
+      )}
+
+      {allDone && <div className="gdone">{t.correct} All challenges done!<button className="btn-go" onClick={next}>Continue →</button></div>}
     </div>
   );
 }
