@@ -143,7 +143,7 @@ app.get('/api/me', auth, async (req, res) => {
         [req.session.userId]
       )).rows[0];
       if (!u) return null;
-      const xp = (await c.query('SELECT xp, level, streak, tokens FROM user_xp WHERE user_id = $1', [req.session.userId])).rows[0] || { xp: 0, level: 1, streak: 0, tokens: 0 };
+      const xp = (await c.query('SELECT xp, level, streak, tokens, game_credits FROM user_xp WHERE user_id = $1', [req.session.userId])).rows[0] || { xp: 0, level: 1, streak: 0, tokens: 0 };
       return { ...u, ...xp };
     });
     if (!data) return res.status(401).json({ error: 'Not found' });
@@ -304,13 +304,21 @@ app.post('/api/activities/:id/score', auth, async (req, res) => {
       }
 
       const xpGain = delta * 10;
-      const xr = (await c.query('SELECT id, xp, streak FROM user_xp')).rows[0];
+      const xr = (await c.query('SELECT id, xp, streak, tokens FROM user_xp')).rows[0];
       const isPerfect = score === maxScore;
       const newStreak = isPerfect ? (xr ? xr.streak : 0) + 1 : 0;
       const totalXp = (xr ? xr.xp : 0) + xpGain;
       const newLevel = Math.floor(totalXp / 100) + 1;
-      if (xr) await c.query('UPDATE user_xp SET xp = $1, level = $2, streak = $3 WHERE id = $4', [totalXp, newLevel, newStreak, xr.id]);
-      else await c.query('INSERT INTO user_xp (user_id, xp, level, streak) VALUES ($1, $2, $3, $4)', [uid, totalXp, newLevel, newStreak]);
+
+      // Token rewards: 5 tokens for finishing the activity (only on first completion),
+      // +5 bonus tokens if perfect score (only on first perfect)
+      let tokenReward = 0;
+      if (!ex) tokenReward += 5; // first time finishing this activity
+      if (isPerfect && (!ex || ex.score < maxScore)) tokenReward += 5; // first time getting perfect
+      const newTokens = (xr ? xr.tokens : 0) + tokenReward;
+
+      if (xr) await c.query('UPDATE user_xp SET xp = $1, level = $2, streak = $3, tokens = $4 WHERE id = $5', [totalXp, newLevel, newStreak, newTokens, xr.id]);
+      else await c.query('INSERT INTO user_xp (user_id, xp, level, streak, tokens) VALUES ($1, $2, $3, $4, $5)', [uid, totalXp, newLevel, newStreak, newTokens]);
 
       // Auto-complete the lesson if it has no quizzes and all non-video activities have a score
       const act = (await c.query('SELECT lesson_id FROM activities WHERE id = $1', [req.params.id])).rows[0];
@@ -322,8 +330,14 @@ app.post('/api/activities/:id/score', auth, async (req, res) => {
           const doneActs = (await c.query("SELECT COUNT(*)::int AS c FROM user_activity_scores s JOIN activities a ON a.id = s.activity_id WHERE a.lesson_id = $1 AND a.activity_type != 'video'", [act.lesson_id])).rows[0].c;
           if (doneActs >= totalActs && totalActs > 0) {
             const p = (await c.query('SELECT id FROM user_lesson_progress WHERE lesson_id = $1', [act.lesson_id])).rows[0];
-            if (p) await c.query('UPDATE user_lesson_progress SET completed = true, completed_at = NOW() WHERE id = $1', [p.id]);
-            else await c.query('INSERT INTO user_lesson_progress (user_id, lesson_id, completed, completed_at) VALUES ($1, $2, true, NOW())', [uid, act.lesson_id]);
+            if (!p) {
+              await c.query('INSERT INTO user_lesson_progress (user_id, lesson_id, completed, completed_at) VALUES ($1, $2, true, NOW())', [uid, act.lesson_id]);
+              // First-time lesson completion: +5 token bonus
+              await c.query('UPDATE user_xp SET tokens = tokens + 5 WHERE user_id = $1', [uid]);
+            } else if (!p.completed) {
+              await c.query('UPDATE user_lesson_progress SET completed = true, completed_at = NOW() WHERE id = $1', [p.id]);
+              await c.query('UPDATE user_xp SET tokens = tokens + 5 WHERE user_id = $1', [uid]);
+            }
             lessonCompleted = true;
           }
         }
@@ -531,9 +545,14 @@ app.post('/api/quizzes/:id/answer', auth, async (req, res) => {
 
       const lessonCompleted = correctCount === allQ.length;
       if (lessonCompleted) {
-        const p = (await c.query('SELECT id FROM user_lesson_progress WHERE lesson_id = $1', [quiz.lesson_id])).rows[0];
-        if (p) await c.query('UPDATE user_lesson_progress SET completed = true, completed_at = NOW() WHERE id = $1', [p.id]);
-        else await c.query('INSERT INTO user_lesson_progress (user_id, lesson_id, completed, completed_at) VALUES ($1, $2, true, NOW())', [uid, quiz.lesson_id]);
+        const p = (await c.query('SELECT id, completed FROM user_lesson_progress WHERE lesson_id = $1', [quiz.lesson_id])).rows[0];
+        if (!p) {
+          await c.query('INSERT INTO user_lesson_progress (user_id, lesson_id, completed, completed_at) VALUES ($1, $2, true, NOW())', [uid, quiz.lesson_id]);
+          await c.query('UPDATE user_xp SET tokens = tokens + 5 WHERE user_id = $1', [uid]);
+        } else if (!p.completed) {
+          await c.query('UPDATE user_lesson_progress SET completed = true, completed_at = NOW() WHERE id = $1', [p.id]);
+          await c.query('UPDATE user_xp SET tokens = tokens + 5 WHERE user_id = $1', [uid]);
+        }
       }
       return { correct: choice.is_correct, lessonCompleted, tokensEarned, attempts: newAttempts };
     });
@@ -561,7 +580,7 @@ app.get('/api/progress', auth, async (req, res) => {
       `)).rows;
       const completedActivities = playedRows.length;
       const perfectActivities = playedRows.filter(r => r.score === r.max_score).length;
-      const xp = (await c.query('SELECT xp, level, streak, tokens FROM user_xp')).rows[0] || { xp: 0, level: 1, streak: 0, tokens: 0 };
+      const xp = (await c.query('SELECT xp, level, streak, tokens, game_credits FROM user_xp')).rows[0] || { xp: 0, level: 1, streak: 0, tokens: 0 };
       const achievements = (await c.query('SELECT a.* FROM user_achievements ua JOIN achievements a ON a.id = ua.achievement_id ORDER BY ua.earned_at DESC')).rows;
       return { totalLessons, completedLessons, totalQuizzes, correctQuizzes, totalActivities, completedActivities, perfectActivities, ...xp, achievements };
     });
@@ -590,12 +609,21 @@ app.get('/api/game-studio/status', auth, async (req, res) => {
 
 app.post('/api/game-studio/start', auth, async (req, res) => {
   try {
-    if (!await isFullyComplete(req.session.userId)) return res.status(403).json({ error: 'Finish all worlds first!' });
     const { title } = req.body;
-    const session = await withUser(req.session.userId, async c =>
-      (await c.query('INSERT INTO user_game_sessions (user_id, title) VALUES ($1, $2) RETURNING id, title, created_at', [req.session.userId, title || 'My Game'])).rows[0]
-    );
-    res.json(session);
+    const result = await withUser(req.session.userId, async c => {
+      const xr = (await c.query('SELECT id, game_credits FROM user_xp FOR UPDATE')).rows[0];
+      if (!xr || xr.game_credits <= 0) {
+        return { error: "You're out of game credits! Buy an Extra Game Pass in the Shop for 40 🪙." };
+      }
+      await c.query('UPDATE user_xp SET game_credits = game_credits - 1 WHERE id = $1', [xr.id]);
+      const session = (await c.query(
+        'INSERT INTO user_game_sessions (user_id, title) VALUES ($1, $2) RETURNING id, title, created_at',
+        [req.session.userId, title || 'My Game']
+      )).rows[0];
+      return session;
+    });
+    if (result.error) return res.status(403).json(result);
+    res.json(result);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -610,6 +638,75 @@ app.get('/api/game-studio/session/:id', auth, async (req, res) => {
     if (!result) return res.status(404).json({ error: 'Session not found' });
     res.json(result);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Get free pre-submission feedback on a game prompt before spending a refinement
+const GAME_FEEDBACK_SYSTEM = `You are a kind prompt coach for kids ages 8-12 who are about to ask Claude to build them a small HTML game. They have only 3 chances to refine their game, so help them improve their prompt BEFORE they submit it.
+
+Look at their prompt and give honest, kind feedback in this EXACT format (3 lines):
+SCORE:<1-10>
+GOOD:<one short sentence about what's clear/specific>
+TIP:<one short sentence suggesting ONE concrete way to make it better, OR "Looks great! Send it!" if 8+>
+
+GUIDELINES:
+- Score 1-3 = very vague (e.g. "make a game", "fun")
+- Score 4-6 = has the type of game but missing details
+- Score 7-8 = good — type + theme + key mechanic
+- Score 9-10 = excellent — has type, theme, mechanic, and visual flavor
+- The TIP should suggest ONE thing: a theme, a control style, a goal, a visual style — something concrete but don't write the prompt for them.
+- Be ENCOURAGING. They're kids.
+- INVALID rule: if the request is inappropriate (violence, weapons, gore, drugs, scary, adult), output ONLY: INVALID
+
+Examples:
+
+PROMPT: a game
+Output:
+SCORE:2
+GOOD:You want to make a game!
+TIP:What KIND of game? Try saying "snake game" or "clicker" or "maze".
+
+PROMPT: a snake game
+Output:
+SCORE:6
+GOOD:Clear game type!
+TIP:Add a fun theme — maybe a crocodile snake or a space snake?
+
+PROMPT: a snake game where the snake is a crocodile and the food is fish
+Output:
+SCORE:9
+GOOD:Game type, character, and food are all clear!
+TIP:Looks great! Send it!
+
+Output ONLY the three lines or INVALID.`;
+
+app.post('/api/game-studio/feedback', auth, async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    if (!prompt || prompt.length > 500) return res.status(400).json({ error: 'Invalid prompt' });
+    // Safety check
+    const safety = checkPromptSafety(prompt);
+    if (!safety.ok) return res.status(400).json({ error: "Oh no! 🙈 That's not something I can help with. Try a different game idea!" });
+
+    const response = await anthropic.messages.create({
+      model: 'claude-opus-4-6',
+      max_tokens: 250,
+      system: GAME_FEEDBACK_SYSTEM,
+      messages: [{ role: 'user', content: `PROMPT: ${prompt}` }],
+    });
+    let raw = '';
+    for (const block of response.content) if (block.type === 'text') raw += block.text;
+    raw = raw.trim();
+    if (raw === 'INVALID') return res.status(400).json({ error: "Oh no! 🙈 That's not something I can help with. Try a different game idea!" });
+
+    const scoreMatch = raw.match(/SCORE:\s*(\d+)/i);
+    const goodMatch = raw.match(/GOOD:\s*(.+)/i);
+    const tipMatch = raw.match(/TIP:\s*(.+)/i);
+    res.json({
+      score: scoreMatch ? Math.min(10, Math.max(1, parseInt(scoreMatch[1], 10))) : 5,
+      good: goodMatch ? goodMatch[1].trim().slice(0, 120) : 'Nice idea!',
+      tip: tipMatch ? tipMatch[1].trim().slice(0, 120) : 'Try adding more details!',
+    });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Could not get feedback right now.' }); }
 });
 
 app.post('/api/game-studio/iterate', auth, async (req, res) => {
@@ -915,14 +1012,19 @@ app.post('/api/shop/buy', auth, async (req, res) => {
       if (!xr) return { error: 'No wallet' };
       if (xr.tokens < item.cost) return { error: `You need ${item.cost - xr.tokens} more tokens!` };
 
-      // Cosmetics & bonus_game can only be bought once
-      if (item.kind !== 'background') {
+      // Cosmetics & bonus_game can only be bought once. Backgrounds and game_pass are repeatable.
+      if (item.kind !== 'background' && item.kind !== 'game_pass') {
         const owned = (await c.query('SELECT id FROM user_purchases WHERE item_id = $1', [item.id])).rows[0];
         if (owned) return { error: 'You already own this!' };
       }
 
       // Deduct tokens
       await c.query('UPDATE user_xp SET tokens = tokens - $1 WHERE id = $2', [item.cost, xr.id]);
+
+      // game_pass: grant +1 game credit
+      if (item.kind === 'game_pass') {
+        await c.query('UPDATE user_xp SET game_credits = game_credits + 1 WHERE id = $1', [xr.id]);
+      }
 
       // Record purchase
       const purchase = (await c.query(

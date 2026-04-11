@@ -152,7 +152,7 @@ async function init() {
       description TEXT NOT NULL,
       icon TEXT NOT NULL,
       cost INTEGER NOT NULL CHECK(cost > 0),
-      kind TEXT NOT NULL CHECK(kind IN ('background','bonus_game','cosmetic'))
+      kind TEXT NOT NULL CHECK(kind IN ('background','bonus_game','cosmetic','game_pass'))
     );
 
     -- Things users have purchased
@@ -312,6 +312,7 @@ async function init() {
       level INTEGER NOT NULL DEFAULT 1,
       streak INTEGER NOT NULL DEFAULT 0,
       tokens INTEGER NOT NULL DEFAULT 0,
+      game_credits INTEGER NOT NULL DEFAULT 1,
       UNIQUE(user_id)
     );
     CREATE TABLE IF NOT EXISTS user_achievements (
@@ -362,6 +363,11 @@ async function init() {
     await pool.query("ALTER TABLE activity_code_challenges ADD COLUMN IF NOT EXISTS difficulty TEXT NOT NULL DEFAULT 'easy'");
     await pool.query("ALTER TABLE activity_code_challenges DROP CONSTRAINT IF EXISTS activity_code_challenges_difficulty_check");
     await pool.query("ALTER TABLE activity_code_challenges ADD CONSTRAINT activity_code_challenges_difficulty_check CHECK(difficulty IN ('easy','medium','hard'))");
+    // game_pass kind for shop_items
+    await pool.query("ALTER TABLE shop_items DROP CONSTRAINT IF EXISTS shop_items_kind_check");
+    await pool.query("ALTER TABLE shop_items ADD CONSTRAINT shop_items_kind_check CHECK(kind IN ('background','bonus_game','cosmetic','game_pass'))");
+    // game_credits column on user_xp
+    await pool.query("ALTER TABLE user_xp ADD COLUMN IF NOT EXISTS game_credits INTEGER NOT NULL DEFAULT 1");
   } catch (e) { console.warn('Migrations:', e.message); }
 
   // ---------- MIGRATION: REDESIGN CODE CHALLENGES INTO 3 DIFFICULTY LEVELS ----------
@@ -580,19 +586,21 @@ async function init() {
     }
   }
 
-  // Seed shop items
-  const { rows: shopRows } = await pool.query('SELECT COUNT(*)::int AS c FROM shop_items');
-  if (shopRows[0].c === 0) {
-    const items = [
-      ['custom_bg',   'Custom AI Background', 'Describe a background and Claude paints it just for you!', '🎨', 40, 'background'],
-      ['bonus_game',  'Memory Match Game',    'Unlock a brand new memory match mini-game forever!',       '🧠', 50, 'bonus_game'],
-      ['crown',       'Royal Crown',          'A shiny crown next to your name in the header.',           '👑',  5, 'cosmetic'],
-      ['sparkles',    'Sparkle Trail',        'Sparkles ✨ follow your mouse cursor everywhere.',          '✨', 10, 'cosmetic'],
-      ['rainbow',     'Rainbow Logo',         'Your header glows with rainbow colors.',                   '🌈', 15, 'cosmetic'],
-    ];
-    for (const [code, name, desc, icon, cost, kind] of items) {
-      await pool.query('INSERT INTO shop_items (code,name,description,icon,cost,kind) VALUES ($1,$2,$3,$4,$5,$6)', [code, name, desc, icon, cost, kind]);
-    }
+  // Seed shop items (idempotent — adds new items, updates prices)
+  const items = [
+    ['custom_bg',     'Custom AI Background', 'Describe a background and Claude paints it just for you!', '🎨', 40, 'background'],
+    ['bonus_game',    'Memory Match Game',    'Unlock a brand new memory match mini-game forever!',       '🧠', 10, 'bonus_game'],
+    ['extra_game',    'Extra Game Pass',      'Unlock the power to make ANOTHER game in Game Studio!',    '🎮', 40, 'game_pass'],
+    ['crown',         'Royal Crown',          'A shiny crown next to your name in the header.',           '👑',  5, 'cosmetic'],
+    ['sparkles',      'Sparkle Trail',        'Sparkles ✨ follow your mouse cursor everywhere.',          '✨', 10, 'cosmetic'],
+    ['rainbow',       'Rainbow Logo',         'Your header glows with rainbow colors.',                   '🌈', 15, 'cosmetic'],
+  ];
+  for (const [code, name, desc, icon, cost, kind] of items) {
+    await pool.query(
+      `INSERT INTO shop_items (code,name,description,icon,cost,kind) VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, icon = EXCLUDED.icon, cost = EXCLUDED.cost, kind = EXCLUDED.kind`,
+      [code, name, desc, icon, cost, kind]
+    );
   }
 
   // Seed universes (idempotent)

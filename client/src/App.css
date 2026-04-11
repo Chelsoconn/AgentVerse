@@ -371,6 +371,10 @@ main{padding:16px;max-width:800px;margin:0 auto}
 .studio-actions .btn-go{width:auto;padding:10px 22px}
 .studio-done{text-align:center;padding:20px;background:var(--card);border-radius:14px;border:2px solid var(--accent)}
 .studio-done p{margin-bottom:14px;font-size:1.05rem}
+.studio-header-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:10px}
+.game-credits-badge{padding:8px 14px;border-radius:14px;background:linear-gradient(135deg,#9c27b0,#673ab7);color:#fff;font-weight:800;font-size:.95rem;box-shadow:0 0 14px rgba(156,39,176,.4)}
+.studio-warning{background:rgba(255,179,0,.12);border-left:4px solid #ffb300;padding:10px 14px;border-radius:10px;margin-bottom:10px;font-size:.88rem;color:#ffd54f}
+.studio-warning strong{color:#fff}
 
 /* WORLD COMPLETE CELEBRATION */
 .celebrate-overlay{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;animation:portalIn .4s ease;overflow:hidden}

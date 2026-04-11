@@ -345,6 +345,7 @@ function Main({ user, setUser }) {
       </header>
       <nav>
         <button className={view==='home'?'on':''} onClick={()=>{setView('home');setUniverse(null);setWorld(null);setLesson(null);}}>🌌 Universes</button>
+        <button className={view==='studio'?'on':''} onClick={()=>setView('studio')}>🎮 My Games</button>
         <button className={view==='shop'?'on':''} onClick={()=>setView('shop')}>🛒 Shop</button>
         <button className={view==='progress'?'on':''} onClick={()=>setView('progress')}>📊 Progress</button>
         <button className={view==='feature'?'on':''} onClick={()=>setView('feature')}>💡 Ideas</button>
@@ -354,7 +355,7 @@ function Main({ user, setUser }) {
         {view==='progress' && <Progress t={effectiveT}/>}
         {view==='feature' && <FeatureRequest t={effectiveT}/>}
         {view==='shop' && <Shop t={effectiveT} user={user} refreshUser={refresh} reloadInventory={loadInventory} hasBonusGame={hasBonusGame}/>}
-        {view==='studio' && <GameStudio t={effectiveT} back={()=>setView('home')}/>}
+        {view==='studio' && <GameStudio t={effectiveT} back={()=>setView('home')} user={user} refreshUser={refresh}/>}
         {view==='home' && !universe && <UniverseMap t={effectiveT} pick={setUniverse}/>}
         {view==='home' && universe && !world && <WorldMap t={effectiveT} universe={universe} pick={enterWorld} openStudio={()=>setView('studio')} back={()=>setUniverse(null)}/>}
         {view==='home' && universe && world && !lesson && <Lessons catId={world.id} t={effectiveT} pick={setLesson} back={()=>setWorld(null)}/>}
@@ -545,16 +546,22 @@ function WorldCompleteOverlay({ t, celebrate, onNext }) {
 }
 
 // ===================== GAME STUDIO =====================
-function GameStudio({ t, back }) {
+function GameStudio({ t, back, user, refreshUser }) {
   const [status, setStatus] = useState(null);
   const [session, setSession] = useState(null);
   const [iterations, setIterations] = useState([]);
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState(false);
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedback, setFeedback] = useState(null);
   const [err, setErr] = useState('');
   const [title, setTitle] = useState('');
 
-  useEffect(() => { api('/game-studio/status').then(setStatus); }, []);
+  async function loadStatus() {
+    const s = await api('/game-studio/status');
+    setStatus(s);
+  }
+  useEffect(() => { loadStatus(); }, []);
 
   const MAX_REFINEMENTS = 3;
   const remaining = MAX_REFINEMENTS - iterations.length;
@@ -569,6 +576,8 @@ function GameStudio({ t, back }) {
     if (s.error) return setErr(s.error);
     setSession(s);
     setIterations([]);
+    setTitle('');
+    if (refreshUser) refreshUser();
   }
 
   async function loadSession(id) {
@@ -576,6 +585,17 @@ function GameStudio({ t, back }) {
     if (s.error) return setErr(s.error);
     setSession(s);
     setIterations(s.iterations || []);
+    setFeedback(null);
+    setPrompt('');
+  }
+
+  async function getFeedback() {
+    if (!prompt.trim() || feedbackBusy || busy) return;
+    setErr(''); setFeedbackBusy(true);
+    const r = await api('/game-studio/feedback', 'POST', { prompt });
+    setFeedbackBusy(false);
+    if (r.error) { setErr(r.error); return; }
+    setFeedback(r);
   }
 
   async function send() {
@@ -586,42 +606,45 @@ function GameStudio({ t, back }) {
     if (r.error) return setErr(r.error);
     setIterations(its => [...its, r.iteration]);
     setPrompt('');
+    setFeedback(null);
   }
 
   if (!status) return <div className="content"><div className="ld">Loading...</div></div>;
-  if (!status.unlocked) {
-    return (
-      <div className="content">
-        <button className="back" onClick={back}>← Back</button>
-        <div className="locked-studio">
-          <div className="big-lock">🔒</div>
-          <h2>Game Studio is locked!</h2>
-          <p>Finish all the worlds first to unlock the Game Studio. Once you do, you can build your own games using AI!</p>
-        </div>
-      </div>
-    );
-  }
+
+  const credits = user?.game_credits ?? 0;
 
   if (!session) {
     return (
       <div className="content">
         <button className="back" onClick={back}>← Back</button>
         <div className="studio-intro">
-          <h2>🎮 Game Studio</h2>
-          <p className="studio-sub">You unlocked the Game Studio! Describe a game in plain English and Claude will build it for you. You can refine it up to <strong>3 times</strong>.</p>
+          <div className="studio-header-row">
+            <h2>🎮 My Games</h2>
+            <div className="game-credits-badge">🎟️ {credits} game {credits === 1 ? 'credit' : 'credits'}</div>
+          </div>
+          <p className="studio-sub">Tap a game below to play it again, or create a new one! You can refine each game up to <strong>3 times</strong>.</p>
           <div className="studio-new">
-            <h3>Create a new game</h3>
-            <input placeholder="Game name (e.g., Snake Adventure)" value={title} onChange={e=>setTitle(e.target.value)}/>
-            {err && <div className="msg bad">{err}</div>}
-            <button className="btn-go" onClick={startNew}>Start Building 🚀</button>
+            <h3>{credits > 0 ? 'Create a new game' : 'Out of game credits!'}</h3>
+            {credits > 0 ? (
+              <>
+                <input placeholder="Name your game (e.g., Crocodile Snake)" value={title} onChange={e=>setTitle(e.target.value)}/>
+                {err && <div className="msg bad">{err}</div>}
+                <button className="btn-go" onClick={startNew}>Start Building 🚀 (uses 1 🎟️)</button>
+              </>
+            ) : (
+              <>
+                <p style={{color:'var(--dim)',fontSize:'.95rem',marginBottom:'10px'}}>You used all your game credits. Buy an <strong>Extra Game Pass</strong> in the Shop for 40 🪙 to make another game!</p>
+                {err && <div className="msg bad">{err}</div>}
+              </>
+            )}
           </div>
           {status.sessions.length > 0 && (
             <div className="studio-saved">
-              <h3>Your Games</h3>
+              <h3>Games You've Made</h3>
               {status.sessions.map(s => (
                 <div key={s.id} className="saved-game" onClick={() => loadSession(s.id)}>
                   <span className="sg-title">🎮 {s.title}</span>
-                  <span className="sg-meta">{s.iteration_count}/3 refinements</span>
+                  <span className="sg-meta">{s.iteration_count}/3 refinements · click to play</span>
                 </div>
               ))}
             </div>
@@ -684,26 +707,46 @@ function GameStudio({ t, back }) {
 
         {remaining > 0 ? (
           <div className="studio-input">
+            <div className="studio-warning">⚠️ You only get {remaining} more {remaining === 1 ? 'shot' : 'shots'}! Click <strong>Get Feedback</strong> first to make your prompt better before sending.</div>
             <textarea
-              placeholder={iterations.length === 0 ? "Describe your game..." : "How should we change it?"}
+              placeholder={iterations.length === 0 ? "Describe your game in detail..." : "How should we change it?"}
               value={prompt}
-              onChange={e=>setPrompt(e.target.value)}
+              onChange={e=>{setPrompt(e.target.value); if (feedback) setFeedback(null);}}
               maxLength={500}
-              disabled={busy}
-              rows={3}
+              disabled={busy || feedbackBusy}
+              rows={4}
             />
+
+            {feedback && (
+              <div className={'pp-feedback score-' + (feedback.score >= 9 ? 'great' : feedback.score >= 7 ? 'good' : 'tryagain')}>
+                <div className="pp-score">
+                  <div className="pp-score-num">{feedback.score}<span>/10</span></div>
+                  <div className="pp-score-stars">{'⭐'.repeat(Math.max(1, Math.round(feedback.score / 2)))}</div>
+                </div>
+                <div className="pp-fb-body">
+                  <div className="pp-fb-row"><strong>👍 Great:</strong> {feedback.good}</div>
+                  <div className="pp-fb-row"><strong>💡 Tip:</strong> {feedback.tip}</div>
+                </div>
+              </div>
+            )}
+
             <div className="studio-actions">
               <span className="char-count">{prompt.length}/500</span>
-              <button className="btn-go" onClick={send} disabled={busy || !prompt.trim()}>
-                {busy ? '🤖 Building...' : iterations.length === 0 ? '✨ Build it!' : '🔄 Refine'}
-              </button>
+              <div style={{display:'flex',gap:'8px'}}>
+                <button className="nbtn" onClick={getFeedback} disabled={busy || feedbackBusy || !prompt.trim()}>
+                  {feedbackBusy ? '✨ Checking...' : '✨ Get Feedback'}
+                </button>
+                <button className="btn-go" onClick={send} disabled={busy || feedbackBusy || !prompt.trim()}>
+                  {busy ? '🤖 Building...' : iterations.length === 0 ? '🚀 Build it!' : '🔄 Refine'}
+                </button>
+              </div>
             </div>
             {err && <div className="msg bad">{err}</div>}
           </div>
         ) : (
           <div className="studio-done">
             <p>🎉 You've used all 3 refinements! Your game is complete.</p>
-            <button className="btn-go" onClick={() => setSession(null)}>Make another game →</button>
+            <button className="btn-go" onClick={() => setSession(null)}>Back to My Games →</button>
           </div>
         )}
       </div>
