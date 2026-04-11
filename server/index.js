@@ -343,7 +343,7 @@ app.post('/api/activities/:id/score', auth, async (req, res) => {
         }
       }
 
-      return { xpGained: xpGain, streak: newStreak, lessonCompleted };
+      return { xpGained: xpGain, tokensEarned: tokenReward, streak: newStreak, lessonCompleted };
     });
     res.json(result);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }

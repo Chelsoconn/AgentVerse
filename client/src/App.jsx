@@ -873,7 +873,7 @@ function LessonView({ lesson, t, back, showXp, showTokens, boom, refreshUser }) 
 
       {step===0 && <div className="intro"><h2>{t.emoji} {lesson.title}</h2><div className="intro-box">{lesson.content.split('\n').map((l,i)=><p key={i}>{l||'\u00A0'}</p>)}</div><button className="btn-go" onClick={()=>setStep(1)}>Let's Go! 🚀</button></div>}
 
-      {step>0 && step<=acts.length && <Activity a={acts[step-1]} t={t} showXp={showXp} boom={boom} next={()=>{
+      {step>0 && step<=acts.length && <Activity a={acts[step-1]} t={t} showXp={showXp} showTokens={showTokens} refreshUser={refreshUser} boom={boom} next={()=>{
         // If this is the last activity and there's no quiz, go straight back to the trail
         if (step === acts.length && quizzes.length === 0) { back(); return; }
         setStep(step+1);
@@ -902,18 +902,26 @@ function LessonView({ lesson, t, back, showXp, showTokens, boom, refreshUser }) 
 }
 
 // ===================== ACTIVITY ROUTER =====================
-function Activity({ a, t, showXp, boom, next }) {
+function Activity({ a, t, showXp, showTokens, refreshUser, boom, next }) {
+  const props = { a, t, showXp, showTokens, refreshUser, boom, next };
   switch(a.activity_type) {
     case 'video': return <Video a={a} next={next}/>;
-    case 'match': return <MatchGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
-    case 'sort': case 'codebuilder': return <SortGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
-    case 'truefalse': return <TFGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
-    case 'fillinblank': return <BlankGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
-    case 'codechallenge': return <CodeChallenge a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
-    case 'minigame': return <MiniGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
-    case 'promptpractice': return <PromptPracticeGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
+    case 'match': return <MatchGame {...props}/>;
+    case 'sort': case 'codebuilder': return <SortGame {...props}/>;
+    case 'truefalse': return <TFGame {...props}/>;
+    case 'fillinblank': return <BlankGame {...props}/>;
+    case 'codechallenge': return <CodeChallenge {...props}/>;
+    case 'minigame': return <MiniGame {...props}/>;
+    case 'promptpractice': return <PromptPracticeGame {...props}/>;
     default: return <div>Unknown</div>;
   }
+}
+
+// Helper: post a score and refresh tokens/popup
+async function postScore(activityId, score, maxScore, showTokens, refreshUser) {
+  const r = await api('/activities/' + activityId + '/score', 'POST', { score, maxScore });
+  if (r && r.tokensEarned > 0 && showTokens) showTokens(r.tokensEarned);
+  if (refreshUser) refreshUser();
 }
 
 // ===================== VIDEO =====================
@@ -990,7 +998,7 @@ function MatchGame({ a, t, showXp, boom, next }) {
       setMatched(nm);
       if (nm.size === a.pairs.length) {
         setDone(true);
-        api('/activities/' + a.id + '/score', 'POST', { score: a.pairs.length, maxScore: a.pairs.length });
+        postScore(a.id, a.pairs.length, a.pairs.length, showTokens, refreshUser);
         showXp(a.pairs.length * 10);
         boom();
       }
@@ -1078,7 +1086,7 @@ function SortGame({ a, t, showXp, boom, next }) {
     const c = items.every((it, i) => it.correct_position === i + 1);
     setChecked(true); setOk(c);
     if (c) {
-      api('/activities/' + a.id + '/score', 'POST', { score: items.length, maxScore: items.length });
+      postScore(a.id, items.length, items.length, showTokens, refreshUser);
       showXp(items.length * 10);
       boom();
     }
@@ -1142,7 +1150,7 @@ function TFGame({ a, t, showXp, boom, next }) {
       } else {
         setShowRes(true);
         const finalScore = score + (isRight ? 1 : 0);
-        api('/activities/' + a.id + '/score', 'POST', { score: finalScore, maxScore: total });
+        postScore(a.id, finalScore, total, showTokens, refreshUser);
         showXp(finalScore * 10);
         if (finalScore === total) boom();
       }
@@ -1197,7 +1205,7 @@ function BlankGame({ a, t, showXp, boom, next }) {
     setRes(r);
     if (r.every(Boolean)) {
       setDone(true);
-      api('/activities/'+a.id+'/score','POST',{score:s,maxScore:a.blanks.length});
+      postScore(a.id, s, a.blanks.length, showTokens, refreshUser);
       showXp(s*10);
       boom();
     }
@@ -1297,7 +1305,7 @@ function CodeChallenge({ a, t, showXp, boom, next }) {
       showXp(reward);
       // Submit score the first time anything passes (so the lesson can complete)
       if (wasFirstPass) {
-        api('/activities/' + a.id + '/score', 'POST', { score: 1, maxScore: 1 });
+        postScore(a.id, 1, 1, showTokens, refreshUser);
         boom();
       }
     }
@@ -1409,7 +1417,7 @@ function PromptPracticeGame({ a, t, showXp, boom, next }) {
       const np = [...passed]; np[idx] = true; setPassed(np);
       showXp(r.score * 5);
       if (np.every(Boolean)) {
-        api('/activities/' + a.id + '/score', 'POST', { score: a.tasks.length, maxScore: a.tasks.length });
+        postScore(a.id, a.tasks.length, a.tasks.length, showTokens, refreshUser);
         boom();
       }
     }
@@ -1546,7 +1554,7 @@ function CatchAIGame({ a, t, showXp, boom, next }) {
     if (phase === 'done' || (phase === 'play' && score >= TARGET)) {
       if (score >= TARGET || phase === 'done') {
         setPhase('done');
-        api('/activities/' + a.id + '/score', 'POST', { score: Math.min(score, TARGET), maxScore: TARGET });
+        postScore(a.id, Math.min(score, TARGET), TARGET, showTokens, refreshUser);
         showXp(score * 10);
         if (score >= TARGET) boom();
       }
@@ -1618,7 +1626,7 @@ function PickToolGame({ a, t, showXp, boom, next }) {
       } else {
         const final = score + (correct ? 1 : 0);
         setPhase('done');
-        api('/activities/' + a.id + '/score', 'POST', { score: final, maxScore: ROUNDS.length });
+        postScore(a.id, final, ROUNDS.length, showTokens, refreshUser);
         showXp(final * 10);
         if (final === ROUNDS.length) boom();
       }
@@ -1707,7 +1715,7 @@ function BugSquashGame({ a, t, showXp, boom, next }) {
 
   useEffect(() => {
     if (phase === 'done') {
-      api('/activities/' + a.id + '/score', 'POST', { score, maxScore: 20 });
+      postScore(a.id, score, 20, showTokens, refreshUser);
       showXp(score * 5);
       if (score >= 15) boom();
     }
@@ -1785,7 +1793,7 @@ function TrainAIGame({ a, t, showXp, boom, next }) {
       } else {
         const final = score + (correct ? 1 : 0);
         setPhase('done');
-        api('/activities/' + a.id + '/score', 'POST', { score: final, maxScore: shuffled.length });
+        postScore(a.id, final, shuffled.length, showTokens, refreshUser);
         showXp(final * 10);
         if (final === shuffled.length) boom();
       }
