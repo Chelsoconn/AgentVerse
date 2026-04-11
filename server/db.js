@@ -167,12 +167,22 @@ async function init() {
       purchased_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
 
-    -- Categories (worlds)
+    -- Universes (group of worlds, capped with a Game Studio)
+    CREATE TABLE IF NOT EXISTS universes (
+      id SERIAL PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      description TEXT NOT NULL,
+      icon TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- Categories (worlds inside a universe)
     CREATE TABLE IF NOT EXISTS categories (
       id SERIAL PRIMARY KEY,
       name TEXT UNIQUE NOT NULL,
       description TEXT NOT NULL,
       icon TEXT NOT NULL,
+      universe_id INTEGER REFERENCES universes(id),
       sort_order INTEGER NOT NULL DEFAULT 0
     );
 
@@ -204,11 +214,19 @@ async function init() {
     CREATE TABLE IF NOT EXISTS activities (
       id SERIAL PRIMARY KEY,
       lesson_id INTEGER NOT NULL REFERENCES lessons(id),
-      activity_type TEXT NOT NULL CHECK(activity_type IN ('video','match','sort','truefalse','codebuilder','fillinblank','codechallenge','minigame')),
+      activity_type TEXT NOT NULL CHECK(activity_type IN ('video','match','sort','truefalse','codebuilder','fillinblank','codechallenge','minigame','promptpractice')),
       title TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       video_url TEXT,
       game_kind TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS activity_prompt_tasks (
+      id SERIAL PRIMARY KEY,
+      activity_id INTEGER NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+      task_description TEXT NOT NULL,
+      hint TEXT NOT NULL DEFAULT '',
       sort_order INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS activity_match_pairs (
@@ -334,7 +352,12 @@ async function init() {
     await pool.query("ALTER TABLE users ADD CONSTRAINT users_status_check CHECK(status IN ('pending','approved','denied'))");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false");
     await pool.query("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_age_check");
-  } catch (e) { console.warn('User migrations:', e.message); }
+    // Categories get universe_id
+    await pool.query("ALTER TABLE categories ADD COLUMN IF NOT EXISTS universe_id INTEGER REFERENCES universes(id)");
+    // Allow promptpractice activity type on existing DBs
+    await pool.query("ALTER TABLE activities DROP CONSTRAINT IF EXISTS activities_activity_type_check");
+    await pool.query("ALTER TABLE activities ADD CONSTRAINT activities_activity_type_check CHECK(activity_type IN ('video','match','sort','truefalse','codebuilder','fillinblank','codechallenge','minigame','promptpractice'))");
+  } catch (e) { console.warn('Migrations:', e.message); }
 
   // ---------- SEED ADMIN USER ----------
   try {
@@ -500,6 +523,130 @@ async function init() {
     ];
     for (const [code, name, desc, icon, cost, kind] of items) {
       await pool.query('INSERT INTO shop_items (code,name,description,icon,cost,kind) VALUES ($1,$2,$3,$4,$5,$6)', [code, name, desc, icon, cost, kind]);
+    }
+  }
+
+  // Seed universes (idempotent)
+  const uniCount = (await pool.query('SELECT COUNT(*)::int AS c FROM universes')).rows[0].c;
+  if (uniCount === 0) {
+    await pool.query("INSERT INTO universes (name, description, icon, sort_order) VALUES ('AI Basics', 'Learn what AI is, how agents work, and how to talk to them!', '🤖', 1)");
+    await pool.query("INSERT INTO universes (name, description, icon, sort_order) VALUES ('Coding Powers', 'Write real Python code and combine it with AI!', '🐍', 2)");
+  }
+  const uni1Id = (await pool.query("SELECT id FROM universes WHERE sort_order = 1")).rows[0].id;
+  const uni2Id = (await pool.query("SELECT id FROM universes WHERE sort_order = 2")).rows[0].id;
+
+  // Migrate: assign existing categories to universes if they haven't been yet
+  await pool.query(`UPDATE categories SET universe_id = $1 WHERE name IN ('What is AI?', 'AI Agents', 'Prompting') AND universe_id IS NULL`, [uni1Id]);
+  await pool.query(`UPDATE categories SET universe_id = $1 WHERE name IN ('Python Coding', 'AI + Coding') AND universe_id IS NULL`, [uni2Id]);
+
+  // Add the Prompting world if it doesn't exist
+  const hasPrompting = (await pool.query("SELECT id FROM categories WHERE name = 'Prompting'")).rows[0];
+  if (!hasPrompting) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const c = (await client.query(
+        "INSERT INTO categories (name, description, icon, universe_id, sort_order) VALUES ('Prompting', 'Learn how to talk to AI so it gives you the best answers!', '💬', $1, 3) RETURNING id",
+        [uni1Id]
+      )).rows[0].id;
+
+      // Lesson 1: What is a prompt?
+      const l1 = (await client.query(
+        "INSERT INTO lessons (category_id, title, content, sort_order) VALUES ($1, 'What is a Prompt?', $2, 1) RETURNING id",
+        [c, "A prompt is just what you TYPE or SAY to an AI. Better prompts = better answers!\n\nThink of it like ordering a pizza. If you just say 'pizza' — you might get plain cheese. But if you say 'large pepperoni pizza with extra cheese', you get exactly what you want!\n\nAI is the same. The more specific you are, the better the answer you get."]
+      )).rows[0].id;
+
+      const l1a1 = (await client.query(
+        "INSERT INTO activities (lesson_id, activity_type, title, description, sort_order) VALUES ($1, 'match', 'Match It Up!', 'Match each prompt with what kind it is!', 1) RETURNING id",
+        [l1]
+      )).rows[0].id;
+      const matchPairs = [
+        ['"tell me stuff"', '👎 Too vague'],
+        ['"3 fun facts about dolphins"', '👍 Specific'],
+        ['"make a cat image"', '👎 Missing details'],
+        ['"funny orange cat wearing a hat"', '👍 Detailed'],
+      ];
+      for (let i = 0; i < matchPairs.length; i++) {
+        await client.query('INSERT INTO activity_match_pairs (activity_id, term, definition, sort_order) VALUES ($1, $2, $3, $4)', [l1a1, matchPairs[i][0], matchPairs[i][1], i + 1]);
+      }
+
+      const q1 = (await client.query("INSERT INTO quizzes (lesson_id, question, sort_order) VALUES ($1, 'What is a prompt?', 1) RETURNING id", [l1])).rows[0].id;
+      await client.query("INSERT INTO quiz_choices (quiz_id, choice_text, is_correct, sort_order) VALUES ($1, 'Something you say or type to an AI', true, 1)", [q1]);
+      await client.query("INSERT INTO quiz_choices (quiz_id, choice_text, is_correct, sort_order) VALUES ($1, 'A secret code', false, 2)", [q1]);
+      await client.query("INSERT INTO quiz_choices (quiz_id, choice_text, is_correct, sort_order) VALUES ($1, 'A type of sandwich', false, 3)", [q1]);
+
+      // Lesson 2: Good vs Bad Prompts
+      const l2 = (await client.query(
+        "INSERT INTO lessons (category_id, title, content, sort_order) VALUES ($1, 'Good vs Bad Prompts', $2, 2) RETURNING id",
+        [c, "Good prompts have these superpowers:\n\n⭐ SPECIFIC — say exactly what you want\n⭐ CLEAR — use simple words\n⭐ HAS DETAILS — colors, numbers, topics\n⭐ TELLS WHO — 'for a 10-year-old', 'in simple words'\n\nBad prompts are vague, confusing, or missing info. The AI will guess, and you might not like the guess!"]
+      )).rows[0].id;
+
+      const l2a1 = (await client.query(
+        "INSERT INTO activities (lesson_id, activity_type, title, description, sort_order) VALUES ($1, 'truefalse', 'Prompt True or False!', 'Are these prompt facts TRUE or FALSE?', 1) RETURNING id",
+        [l2]
+      )).rows[0].id;
+      const tfItems = [
+        ['Specific prompts give better answers', true, 'Yes! The more details, the better.'],
+        ['"Do stuff" is a great prompt', false, 'Nope! Too vague. What kind of stuff?'],
+        ['Telling AI who the answer is for helps', true, "Yes! 'Explain like I'm 8' works great."],
+        ['You should NEVER use details', false, 'Wrong! Details are the secret sauce.'],
+        ['Good prompts use clear words', true, 'Yes! Simple and clear is best.'],
+      ];
+      for (let i = 0; i < tfItems.length; i++) {
+        await client.query('INSERT INTO activity_truefalse_items (activity_id, statement, is_true, explanation, sort_order) VALUES ($1, $2, $3, $4, $5)', [l2a1, tfItems[i][0], tfItems[i][1], tfItems[i][2], i + 1]);
+      }
+
+      const l2a2 = (await client.query(
+        "INSERT INTO activities (lesson_id, activity_type, title, description, sort_order) VALUES ($1, 'sort', 'Build a Great Prompt!', 'Put these parts in the right order to make an awesome prompt!', 2) RETURNING id",
+        [l2]
+      )).rows[0].id;
+      const sortItems = [
+        ['Tell me', 1],
+        ['5 fun facts', 2],
+        ['about space', 3],
+        ['for a 10-year-old', 4],
+        ['in simple words', 5],
+      ];
+      for (const [content, pos] of sortItems) {
+        await client.query('INSERT INTO activity_sort_items (activity_id, content, correct_position) VALUES ($1, $2, $3)', [l2a2, content, pos]);
+      }
+
+      const q2 = (await client.query("INSERT INTO quizzes (lesson_id, question, sort_order) VALUES ($1, 'Which is the BEST prompt?', 1) RETURNING id", [l2])).rows[0].id;
+      await client.query("INSERT INTO quiz_choices (quiz_id, choice_text, is_correct, sort_order) VALUES ($1, 'Tell me things', false, 1)", [q2]);
+      await client.query("INSERT INTO quiz_choices (quiz_id, choice_text, is_correct, sort_order) VALUES ($1, 'Write 3 facts about dogs for a kid', true, 2)", [q2]);
+      await client.query("INSERT INTO quiz_choices (quiz_id, choice_text, is_correct, sort_order) VALUES ($1, 'Dogs', false, 3)", [q2]);
+
+      // Lesson 3: Practice Prompting
+      const l3 = (await client.query(
+        "INSERT INTO lessons (category_id, title, content, sort_order) VALUES ($1, 'Your Turn: Practice!', $2, 3) RETURNING id",
+        [c, "Time to try it yourself! You'll be given a task and you write the prompt. Claude will read it and give you kind feedback.\n\nRemember:\n⭐ Be specific\n⭐ Add details\n⭐ Say who it's for\n\nThis is important — in the next world you'll be building your own game with prompts!"]
+      )).rows[0].id;
+
+      const l3a1 = (await client.query(
+        "INSERT INTO activities (lesson_id, activity_type, title, description, sort_order) VALUES ($1, 'promptpractice', 'Prompt Practice!', 'Write the best prompt you can! Claude will give you feedback.', 1) RETURNING id",
+        [l3]
+      )).rows[0].id;
+      const practiceTasks = [
+        ['Write a prompt to get 3 cool facts about octopuses for a kid.', 'Try including "3 facts", "octopuses", and who it\'s for!'],
+        ['Write a prompt to get help inventing a funny name for a pet dragon.', 'Try saying the pet type, and maybe what kind of name (funny, royal, silly)!'],
+        ['Write a prompt to help you describe a magical island for a story.', 'Include what kind of details you want (colors, creatures, weather)!'],
+      ];
+      for (let i = 0; i < practiceTasks.length; i++) {
+        await client.query('INSERT INTO activity_prompt_tasks (activity_id, task_description, hint, sort_order) VALUES ($1, $2, $3, $4)', [l3a1, practiceTasks[i][0], practiceTasks[i][1], i + 1]);
+      }
+
+      const q3 = (await client.query("INSERT INTO quizzes (lesson_id, question, sort_order) VALUES ($1, 'What makes a prompt great?', 1) RETURNING id", [l3])).rows[0].id;
+      await client.query("INSERT INTO quiz_choices (quiz_id, choice_text, is_correct, sort_order) VALUES ($1, 'Being specific and detailed', true, 1)", [q3]);
+      await client.query("INSERT INTO quiz_choices (quiz_id, choice_text, is_correct, sort_order) VALUES ($1, 'Being vague and short', false, 2)", [q3]);
+      await client.query("INSERT INTO quiz_choices (quiz_id, choice_text, is_correct, sort_order) VALUES ($1, 'Yelling at the AI', false, 3)", [q3]);
+
+      await client.query('COMMIT');
+      console.log('✓ Seeded Prompting world');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      console.warn('Prompting seed failed:', e.message);
+    } finally {
+      client.release();
     }
   }
 

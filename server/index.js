@@ -173,6 +173,60 @@ app.get('/api/themes', auth, async (req, res) => {
 });
 
 // ================== CONTENT ==================
+// Get all universes with completion + unlock status
+app.get('/api/universes', auth, async (req, res) => {
+  try {
+    const result = await withUser(req.session.userId, async c => {
+      const unis = (await c.query('SELECT * FROM universes ORDER BY sort_order')).rows;
+      let prevComplete = true;
+      for (const uni of unis) {
+        const cats = (await c.query('SELECT id FROM categories WHERE universe_id = $1', [uni.id])).rows;
+        const lessonIds = cats.length === 0 ? [] :
+          (await c.query('SELECT id FROM lessons WHERE category_id = ANY($1::int[])', [cats.map(cr => cr.id)])).rows.map(l => l.id);
+        const total = lessonIds.length;
+        const done = total === 0 ? 0 :
+          (await c.query('SELECT COUNT(*)::int AS c FROM user_lesson_progress WHERE lesson_id = ANY($1::int[]) AND completed = true', [lessonIds])).rows[0].c;
+        // Game Studio completion: at least 1 game session with 1+ iteration
+        const gsDone = (await c.query(`
+          SELECT COUNT(*)::int AS c FROM user_game_sessions s
+          WHERE EXISTS (SELECT 1 FROM user_game_iterations WHERE session_id = s.id)
+        `)).rows[0].c > 0;
+        uni.totalLessons = total;
+        uni.completedLessons = done;
+        uni.gameStudioDone = gsDone;
+        uni.isComplete = total > 0 && done === total && gsDone;
+        uni.isUnlocked = prevComplete;
+        prevComplete = uni.isComplete;
+      }
+      return unis;
+    });
+    res.json(result);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Get categories (worlds) for a specific universe
+app.get('/api/universes/:id/categories', auth, async (req, res) => {
+  try {
+    const result = await withUser(req.session.userId, async c => {
+      const cats = (await c.query('SELECT * FROM categories WHERE universe_id = $1 ORDER BY sort_order', [req.params.id])).rows;
+      let prevComplete = true;
+      for (const cat of cats) {
+        const lessons = (await c.query('SELECT id FROM lessons WHERE category_id = $1', [cat.id])).rows;
+        const lessonIds = lessons.map(l => l.id);
+        const completedCount = lessonIds.length === 0 ? 0 :
+          (await c.query('SELECT COUNT(*)::int AS c FROM user_lesson_progress WHERE lesson_id = ANY($1::int[]) AND completed = true', [lessonIds])).rows[0].c;
+        cat.totalLessons = lessons.length;
+        cat.completedLessons = completedCount;
+        cat.isComplete = lessons.length > 0 && completedCount === lessons.length;
+        cat.isUnlocked = prevComplete;
+        prevComplete = cat.isComplete;
+      }
+      return cats;
+    });
+    res.json(result);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
 app.get('/api/categories', auth, async (req, res) => {
   try {
     const result = await withUser(req.session.userId, async c => {
@@ -226,6 +280,7 @@ app.get('/api/lessons/:id/activities', auth, async (req, res) => {
           }
         }
         else if (a.activity_type === 'codechallenge') a.challenges = (await c.query('SELECT * FROM activity_code_challenges WHERE activity_id = $1 ORDER BY sort_order', [a.id])).rows;
+        else if (a.activity_type === 'promptpractice') a.tasks = (await c.query('SELECT * FROM activity_prompt_tasks WHERE activity_id = $1 ORDER BY sort_order', [a.id])).rows;
       }
       return acts;
     });
@@ -278,6 +333,81 @@ app.post('/api/activities/:id/score', auth, async (req, res) => {
     });
     res.json(result);
   } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+// ================== PROMPT GRADER (for Prompting world) ==================
+const PROMPT_GRADER_SYSTEM = `You are a kind, encouraging prompt coach for children ages 8-12. A kid is learning how to write good prompts for AI. They will show you a TASK and their attempt at a PROMPT. Your job is to score it and give very kind, short feedback.
+
+RULES:
+1. Be ENCOURAGING and KIND. They're kids learning. Never say anything negative or harsh.
+2. Output in this EXACT format (3 lines):
+   SCORE:<number 1-10>
+   GOOD:<one short sentence about what they did well>
+   TIP:<one short sentence suggesting one improvement, or "Perfect! You nailed it!" if 9+>
+3. Keep GOOD and TIP under 80 characters each.
+4. Score 1-3 = very vague/empty, 4-6 = okay but missing details, 7-8 = good prompt, 9-10 = excellent specific prompt with clear details.
+5. If the kid's prompt is totally unrelated to the task, score it 2-3 and gently suggest reading the task again.
+6. If their prompt is inappropriate or contains bad words, output ONLY: INVALID
+
+EXAMPLES:
+
+TASK: Write a prompt to get 3 facts about dolphins for a kid.
+PROMPT: dolphins
+Output:
+SCORE:3
+GOOD:You picked the right topic!
+TIP:Try adding "3 facts" and "for a kid" so the AI knows exactly what you need.
+
+TASK: Write a prompt to get 3 facts about dolphins for a kid.
+PROMPT: Tell me 3 fun facts about dolphins that an 8-year-old would love
+Output:
+SCORE:10
+GOOD:You're specific, clear, and told the AI who the answer is for!
+TIP:Perfect! You nailed it!
+
+TASK: Write a prompt to invent a name for a pet dragon.
+PROMPT: name my dragon
+Output:
+SCORE:5
+GOOD:You said what you want named.
+TIP:Add details like "funny and silly" or "royal sounding" to help the AI pick a style.
+
+Output only the three lines or INVALID. Nothing else.`;
+
+app.post('/api/prompt-practice/grade', auth, async (req, res) => {
+  try {
+    const { task, userPrompt } = req.body;
+    if (!task || !userPrompt || userPrompt.length > 500) return res.status(400).json({ error: 'Invalid input' });
+
+    // Basic safety check on the kid's prompt
+    const lower = userPrompt.toLowerCase();
+    for (const term of BLOCKED_TERMS) {
+      if (lower.includes(term)) return res.status(400).json({ error: "Oh no! 🙈 Let's keep it kid-friendly!" });
+    }
+
+    const response = await anthropic.messages.create({
+      model: 'claude-opus-4-6',
+      max_tokens: 300,
+      system: PROMPT_GRADER_SYSTEM,
+      messages: [{ role: 'user', content: `TASK: ${task}\nPROMPT: ${userPrompt}` }],
+    });
+
+    let raw = '';
+    for (const block of response.content) if (block.type === 'text') raw += block.text;
+    raw = raw.trim();
+
+    if (raw === 'INVALID') return res.status(400).json({ error: "Oh no! 🙈 Let's keep it kid-friendly!" });
+
+    // Parse
+    const scoreMatch = raw.match(/SCORE:\s*(\d+)/i);
+    const goodMatch = raw.match(/GOOD:\s*(.+)/i);
+    const tipMatch = raw.match(/TIP:\s*(.+)/i);
+    const score = scoreMatch ? Math.min(10, Math.max(1, parseInt(scoreMatch[1], 10))) : 5;
+    const good = goodMatch ? goodMatch[1].trim().slice(0, 120) : 'Nice try!';
+    const tip = tipMatch ? tipMatch[1].trim().slice(0, 120) : 'Try adding more details!';
+
+    res.json({ score, good, tip });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Could not grade right now. Try again!' }); }
 });
 
 // ================== PYTHON RUNNER ==================

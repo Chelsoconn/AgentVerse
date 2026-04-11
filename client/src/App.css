@@ -215,6 +215,53 @@ main{padding:16px;max-width:800px;margin:0 auto}
 .timer.urgent{color:#ff6b6b;animation:pulse .5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 
+/* UNIVERSE MAP */
+.universe-title{font-size:2rem;text-align:center;margin-bottom:6px;text-shadow:0 0 20px var(--glow)}
+.universe-sub{text-align:center;color:var(--dim);margin-bottom:20px;font-size:1rem}
+.universe-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;max-width:900px;margin:0 auto}
+.universe-card{background:var(--card);border:3px solid rgba(255,255,255,.12);border-radius:22px;padding:26px 22px;text-align:center;cursor:pointer;transition:all .25s;position:relative;overflow:hidden}
+.universe-card.open:hover{transform:translateY(-6px) scale(1.02);border-color:var(--accent);box-shadow:0 12px 40px var(--glow)}
+.universe-card.locked{cursor:not-allowed;opacity:.5;filter:grayscale(.6)}
+.universe-card.done{border-color:#4caf50;box-shadow:0 0 24px rgba(76,175,80,.35)}
+.universe-num{font-size:.72rem;color:var(--dim);text-transform:uppercase;letter-spacing:2px;font-weight:800;margin-bottom:4px}
+.universe-icon{font-size:4rem;margin-bottom:8px;filter:drop-shadow(0 3px 10px rgba(0,0,0,.5))}
+.universe-card h3{font-size:1.4rem;margin-bottom:6px}
+.universe-desc{font-size:.9rem;color:var(--dim);margin-bottom:14px;line-height:1.4;min-height:40px}
+.universe-progress{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.up-bar{flex:1;height:9px;background:rgba(255,255,255,.1);border-radius:5px;overflow:hidden}
+.up-fill{height:100%;background:var(--accent);border-radius:5px;transition:width .5s}
+.universe-progress span{font-size:.8rem;color:var(--dim);min-width:72px;text-align:right}
+.universe-extra{font-size:.78rem;color:var(--dim);margin-bottom:10px}
+.universe-status{font-size:.9rem;font-weight:700;padding:8px 12px;border-radius:10px;background:rgba(255,255,255,.06);margin-top:4px}
+
+/* PROMPT PRACTICE */
+.pp-card .pp-dots{display:flex;gap:6px}
+.pp-dot{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;border:2px solid transparent}
+.pp-dot.active{border-color:var(--accent);background:rgba(255,255,255,.12)}
+.pp-dot.done{background:#4caf50;color:#111}
+.pp-task{background:rgba(255,255,255,.06);border-left:4px solid var(--accent);padding:14px 16px;border-radius:10px;margin:14px 0}
+.pp-label{font-size:.72rem;color:var(--accent);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:4px}
+.pp-task-text{font-size:1.05rem;font-weight:600;line-height:1.4}
+.pp-hint{font-size:.82rem;color:#ffd54f;margin-top:6px}
+.pp-input{background:var(--card);border:2px solid rgba(255,255,255,.1);border-radius:12px;padding:12px;margin-bottom:12px}
+.pp-input textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:var(--text);font-size:1rem;outline:none;font-family:inherit;resize:vertical}
+.pp-input textarea:focus{border-color:var(--accent)}
+.pp-input-foot{display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:10px}
+.pp-input-foot .btn-go{width:auto;padding:10px 22px}
+
+.pp-feedback{background:rgba(255,255,255,.05);border-radius:14px;padding:16px;margin-top:12px;border-left:5px solid #9fa8da;animation:pop .3s ease}
+.pp-feedback.score-great{border-left-color:#4caf50;background:rgba(76,175,80,.08)}
+.pp-feedback.score-good{border-left-color:#81c784;background:rgba(129,199,132,.08)}
+.pp-feedback.score-tryagain{border-left-color:#ffb300;background:rgba(255,179,0,.08)}
+.pp-score{display:flex;align-items:center;gap:14px;margin-bottom:10px}
+.pp-score-num{font-size:2rem;font-weight:800;color:var(--accent)}
+.pp-score-num span{font-size:1rem;color:var(--dim);font-weight:500}
+.pp-score-stars{font-size:1.3rem}
+.pp-fb-body{font-size:.95rem;line-height:1.5}
+.pp-fb-row{margin-bottom:4px}
+.pp-final{margin-top:14px;text-align:center;font-size:1.1rem;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:10px}
+.pp-feedback .btn-go{margin-top:10px;width:auto;padding:10px 22px}
+
 /* JOURNEY MAP */
 .journey{max-width:900px}
 .journey-title{font-size:1.8rem;text-align:center;margin-bottom:14px;text-shadow:0 0 20px var(--glow)}

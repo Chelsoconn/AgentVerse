@@ -226,6 +226,7 @@ function Auth({ onLogin }) {
 // ===================== MAIN =====================
 function Main({ user, setUser }) {
   const [view, setView] = useState('home');
+  const [universe, setUniverse] = useState(null); // selected universe object
   const [world, setWorld] = useState(null);
   const [lesson, setLesson] = useState(null);
   const [portal, setPortal] = useState(null);
@@ -343,9 +344,8 @@ function Main({ user, setUser }) {
         </div>
       </header>
       <nav>
-        <button className={view==='home'?'on':''} onClick={()=>{setView('home');setWorld(null);setLesson(null);}}>🗺️ Adventure</button>
+        <button className={view==='home'?'on':''} onClick={()=>{setView('home');setUniverse(null);setWorld(null);setLesson(null);}}>🌌 Universes</button>
         <button className={view==='shop'?'on':''} onClick={()=>setView('shop')}>🛒 Shop</button>
-        <button className={view==='studio'?'on':''} onClick={()=>setView('studio')}>🎮 Game Studio</button>
         <button className={view==='progress'?'on':''} onClick={()=>setView('progress')}>📊 Progress</button>
         <button className={view==='feature'?'on':''} onClick={()=>setView('feature')}>💡 Ideas</button>
       </nav>
@@ -355,8 +355,9 @@ function Main({ user, setUser }) {
         {view==='feature' && <FeatureRequest t={effectiveT}/>}
         {view==='shop' && <Shop t={effectiveT} user={user} refreshUser={refresh} reloadInventory={loadInventory} hasBonusGame={hasBonusGame}/>}
         {view==='studio' && <GameStudio t={effectiveT} back={()=>setView('home')}/>}
-        {view==='home' && !world && <WorldMap t={effectiveT} pick={enterWorld} openStudio={()=>setView('studio')}/>}
-        {view==='home' && world && !lesson && <Lessons catId={world.id} t={effectiveT} pick={setLesson} back={()=>setWorld(null)}/>}
+        {view==='home' && !universe && <UniverseMap t={effectiveT} pick={setUniverse}/>}
+        {view==='home' && universe && !world && <WorldMap t={effectiveT} universe={universe} pick={enterWorld} openStudio={()=>setView('studio')} back={()=>setUniverse(null)}/>}
+        {view==='home' && universe && world && !lesson && <Lessons catId={world.id} t={effectiveT} pick={setLesson} back={()=>setWorld(null)}/>}
         {view==='home' && lesson && <LessonView lesson={lesson} t={effectiveT} back={onLessonExit} showXp={showXp} showTokens={showTokens} boom={boom} refreshUser={refresh}/>}
       </main>
     </div>
@@ -404,18 +405,69 @@ function LiveBackground({ emojis, animation }) {
   );
 }
 
-// ===================== ADVENTURE MAP (HOME) =====================
-function WorldMap({ t, pick, openStudio }) {
+// ===================== UNIVERSE MAP (HOME) =====================
+function UniverseMap({ t, pick }) {
+  const [unis, setUnis] = useState([]);
+  useEffect(() => { api('/universes').then(u => Array.isArray(u) && setUnis(u)); }, []);
+
+  return (
+    <div className="content">
+      <h2 className="universe-title">🌌 Choose Your Universe</h2>
+      <p className="universe-sub">Each universe is a big adventure. Finish one to unlock the next!</p>
+      <div className="universe-list">
+        {unis.map((u, i) => {
+          const pct = u.totalLessons ? Math.round((u.completedLessons / u.totalLessons) * 100) : 0;
+          const canEnter = u.isUnlocked;
+          return (
+            <div
+              key={u.id}
+              className={'universe-card' + (canEnter ? ' open' : ' locked') + (u.isComplete ? ' done' : '')}
+              onClick={() => canEnter && pick(u)}
+            >
+              <div className="universe-num">Universe {i + 1}</div>
+              <div className="universe-icon">{canEnter ? u.icon : '🔒'}</div>
+              <h3>{u.name}</h3>
+              <p className="universe-desc">{u.description}</p>
+              <div className="universe-progress">
+                <div className="up-bar"><div className="up-fill" style={{width: pct + '%'}}/></div>
+                <span>{u.completedLessons}/{u.totalLessons} lessons</span>
+              </div>
+              {u.totalLessons > 0 && (
+                <div className="universe-extra">🎮 Game Studio: {u.gameStudioDone ? '✅ Done' : '⏳ Not yet'}</div>
+              )}
+              <div className="universe-status">
+                {u.isComplete ? '🏆 Complete!' : canEnter ? '▶️ Enter' : '🔒 Locked'}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ===================== ADVENTURE MAP (inside a universe) =====================
+function WorldMap({ t, universe, pick, openStudio, back }) {
   const [cats, setCats] = useState([]);
-  useEffect(() => { api('/categories').then(c => Array.isArray(c) && setCats(c)); }, []);
+  const [gsStatus, setGsStatus] = useState(null);
+  useEffect(() => {
+    api('/universes/' + universe.id + '/categories').then(c => Array.isArray(c) && setCats(c));
+    api('/universes').then(u => {
+      if (Array.isArray(u)) {
+        const cur = u.find(x => x.id === universe.id);
+        if (cur) setGsStatus(cur);
+      }
+    });
+  }, [universe.id]);
 
   const allDone = cats.length > 0 && cats.every(c => c.isComplete);
   const totalStops = cats.length + 1; // worlds + game studio stop
 
   return (
     <div className="content journey">
-      <h2 className="journey-title">Your Adventure Map {t.emoji}</h2>
-      <p className="journey-sub">Complete each world to unlock the next!</p>
+      <button className="back" onClick={back}>← All Universes</button>
+      <h2 className="journey-title">{universe.icon} {universe.name}</h2>
+      <p className="journey-sub">Complete all worlds + the Game Studio to unlock the next universe!</p>
       <div className="journey-path big-path" style={{background:t.pathBg}}>
         {Array.from({length:18}).map((_,i)=><span key={'d'+i} className="float-deco" style={{left:`${(i*7)%95}%`,top:`${(i*11)%100}%`,animationDelay:`${i*0.4}s`,fontSize:`${1.4+(i%3)*0.5}rem`}}>{t.deco[i%t.deco.length]}</span>)}
         <svg className="path-svg" preserveAspectRatio="none" viewBox="0 0 100 100">
@@ -446,18 +498,20 @@ function WorldMap({ t, pick, openStudio }) {
           {cats.length > 0 && (
             <div className={`stop world-stop stop-${cats.length%2===0?'left':'right'} studio-stop ${allDone?'open current':'locked'}`} onClick={()=>allDone && openStudio()}>
               <div className="stop-marker world-marker studio-marker">
-                {allDone ? '🎮' : '🔒'}
+                {allDone ? (gsStatus?.gameStudioDone ? '🏆' : '🎮') : '🔒'}
               </div>
               <div className="stop-card world-card">
                 <div className="stop-num">Final Stop</div>
                 <h3>🎮 Game Studio</h3>
                 <p className="world-desc">Build your own game with AI!</p>
-                <span className="stop-badge">{allDone?'✨ Unlocked!':'🔒 Finish all worlds first'}</span>
+                <span className="stop-badge">
+                  {allDone ? (gsStatus?.gameStudioDone ? '🏆 Complete!' : '✨ Unlocked!') : '🔒 Finish all worlds first'}
+                </span>
               </div>
             </div>
           )}
         </div>
-        {allDone && <div className="path-flag">🎉 You're a Master Builder! Try the Game Studio!</div>}
+        {allDone && gsStatus?.gameStudioDone && <div className="path-flag">🎉 Universe Complete! Head back to unlock the next one!</div>}
       </div>
     </div>
   );
@@ -808,6 +862,7 @@ function Activity({ a, t, showXp, boom, next }) {
     case 'fillinblank': return <BlankGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
     case 'codechallenge': return <CodeChallenge a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
     case 'minigame': return <MiniGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
+    case 'promptpractice': return <PromptPracticeGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
     default: return <div>Unknown</div>;
   }
 }
@@ -1147,6 +1202,106 @@ function CodeChallenge({ a, t, showXp, boom, next }) {
       </div>
 
       {allDone && <div className="gdone">{t.correct} All challenges done!<button className="btn-go" onClick={next}>Next →</button></div>}
+    </div>
+  );
+}
+
+// ===================== PROMPT PRACTICE =====================
+function PromptPracticeGame({ a, t, showXp, boom, next }) {
+  const [idx, setIdx] = useState(0);
+  const [prompt, setPrompt] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState(null);
+  const [err, setErr] = useState('');
+  const [passed, setPassed] = useState(a.tasks.map(() => false));
+  const task = a.tasks[idx];
+  const allDone = passed.every(Boolean);
+
+  async function submit() {
+    if (!prompt.trim() || busy) return;
+    setErr(''); setBusy(true); setFeedback(null);
+    const r = await api('/prompt-practice/grade', 'POST', { task: task.task_description, userPrompt: prompt });
+    setBusy(false);
+    if (r.error) { setErr(r.error); return; }
+    setFeedback(r);
+    if (r.score >= 7) {
+      const np = [...passed]; np[idx] = true; setPassed(np);
+      showXp(r.score * 5);
+      if (np.every(Boolean)) {
+        api('/activities/' + a.id + '/score', 'POST', { score: a.tasks.length, maxScore: a.tasks.length });
+        boom();
+      }
+    }
+  }
+
+  function goNext() {
+    if (idx < a.tasks.length - 1) {
+      setIdx(idx + 1);
+      setPrompt('');
+      setFeedback(null);
+      setErr('');
+    }
+  }
+
+  function tryAgain() {
+    setFeedback(null);
+    setErr('');
+  }
+
+  return (
+    <div className="acard pp-card">
+      <div className="acard-head">
+        <h3>💬 {a.title}</h3>
+        <div className="pp-dots">
+          {a.tasks.map((_, i) => (
+            <span key={i} className={'pp-dot' + (passed[i] ? ' done' : '') + (i === idx ? ' active' : '')}>{i+1}</span>
+          ))}
+        </div>
+      </div>
+      <p className="adesc">{a.description}</p>
+
+      <div className="pp-task">
+        <div className="pp-label">Your Task:</div>
+        <div className="pp-task-text">{task.task_description}</div>
+        {task.hint && <div className="pp-hint">💡 {task.hint}</div>}
+      </div>
+
+      <div className="pp-input">
+        <textarea
+          placeholder="Type your prompt here..."
+          value={prompt}
+          onChange={e => setPrompt(e.target.value)}
+          disabled={busy || (feedback && feedback.score >= 7)}
+          rows={4}
+          maxLength={500}
+        />
+        <div className="pp-input-foot">
+          <span className="char-count">{prompt.length}/500</span>
+          {!feedback && <button className="btn-go" disabled={busy || !prompt.trim()} onClick={submit}>
+            {busy ? '✨ Checking...' : 'Submit Prompt ✨'}
+          </button>}
+          {feedback && feedback.score < 7 && <button className="btn-go" onClick={tryAgain}>Try Again 🔄</button>}
+        </div>
+      </div>
+
+      {err && <div className="msg bad">{err}</div>}
+
+      {feedback && (
+        <div className={'pp-feedback score-' + (feedback.score >= 9 ? 'great' : feedback.score >= 7 ? 'good' : 'tryagain')}>
+          <div className="pp-score">
+            <div className="pp-score-num">{feedback.score}<span>/10</span></div>
+            <div className="pp-score-stars">{'⭐'.repeat(Math.max(1, Math.round(feedback.score / 2)))}</div>
+          </div>
+          <div className="pp-fb-body">
+            <div className="pp-fb-row"><strong>👍 Great:</strong> {feedback.good}</div>
+            <div className="pp-fb-row"><strong>💡 Tip:</strong> {feedback.tip}</div>
+          </div>
+          {feedback.score >= 7 && idx < a.tasks.length - 1 && (
+            <button className="btn-go" onClick={goNext}>Next Task →</button>
+          )}
+          {allDone && <div className="pp-final">🏆 You finished all the practice prompts!<button className="btn-go" onClick={next}>Continue →</button></div>}
+        </div>
+      )}
     </div>
   );
 }
