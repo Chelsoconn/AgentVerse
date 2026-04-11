@@ -383,13 +383,20 @@ async function init() {
   for (const t of rlsTables) {
     try {
       await pool.query(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
-      // FORCE only matters if the connecting role is the table owner; harmless otherwise
       try { await pool.query(`ALTER TABLE ${t} FORCE ROW LEVEL SECURITY`); } catch {}
+      // User policy: can only see/touch their own rows
       await pool.query(`DROP POLICY IF EXISTS ${t}_isolation ON ${t}`);
       await pool.query(`
         CREATE POLICY ${t}_isolation ON ${t}
           USING (user_id = NULLIF(current_setting('app.user_id', true), '')::int)
           WITH CHECK (user_id = NULLIF(current_setting('app.user_id', true), '')::int)
+      `);
+      // Admin policy: if app.is_admin is set, bypass
+      await pool.query(`DROP POLICY IF EXISTS ${t}_admin ON ${t}`);
+      await pool.query(`
+        CREATE POLICY ${t}_admin ON ${t}
+          USING (current_setting('app.is_admin', true) = 'true')
+          WITH CHECK (current_setting('app.is_admin', true) = 'true')
       `);
     } catch (e) {
       console.warn(`RLS setup failed for ${t}:`, e.message);
