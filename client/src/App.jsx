@@ -1196,71 +1196,123 @@ function BlankGame({ a, t, showXp, boom, next }) {
 }
 
 // ===================== CODE CHALLENGE (PYTHON IDE) =====================
+const DIFFICULTY_LABELS = {
+  easy:   { icon: '🟢', label: 'Easy',   sub: 'Fill in the blank' },
+  medium: { icon: '🟡', label: 'Medium', sub: 'Write the line' },
+  hard:   { icon: '🔴', label: 'Hard',   sub: 'Code it yourself' },
+};
+
 function CodeChallenge({ a, t, showXp, boom, next }) {
+  // Sort challenges so easy → medium → hard, regardless of insert order
+  const sortedChallenges = [...a.challenges].sort((x, y) => {
+    const order = { easy: 0, medium: 1, hard: 2 };
+    return (order[x.difficulty] ?? 9) - (order[y.difficulty] ?? 9);
+  });
+
   const [curIdx, setCurIdx] = useState(0);
-  const [codes, setCodes] = useState(a.challenges.map(c=>c.starter_code));
+  const [codes, setCodes] = useState(sortedChallenges.map(c => c.starter_code));
   const [output, setOutput] = useState('');
   const [error, setError] = useState('');
   const [running, setRunning] = useState(false);
-  const [passed, setPassed] = useState(a.challenges.map(()=>false));
+  const [passed, setPassed] = useState(sortedChallenges.map(() => false));
   const [showHint, setShowHint] = useState(false);
-  const ch = a.challenges[curIdx];
-  const allDone = passed.every(Boolean);
+  const ch = sortedChallenges[curIdx];
+  // Activity counts as DONE when ANY difficulty is passed (kid doesn't need to do all 3)
+  const anyDone = passed.some(Boolean);
 
   async function runCode() {
     setRunning(true); setOutput(''); setError(''); setShowHint(false);
-    const r = await api('/run-python','POST',{code:codes[curIdx]});
+    // Friendly check: did they replace the placeholder?
+    if (codes[curIdx].includes('<TYPE HERE>')) {
+      setRunning(false);
+      setError('🙋 Don\'t forget to replace <TYPE HERE> with your answer!');
+      return;
+    }
+    if (!codes[curIdx].trim()) {
+      setRunning(false);
+      setError('🙋 Type some code first, then press Run!');
+      return;
+    }
+    const r = await api('/run-python', 'POST', { code: codes[curIdx] });
     setRunning(false);
-    if (r.error) { setError(r.error); setOutput(r.output||''); return; }
+    if (r.error) { setError(r.error); setOutput(r.output || ''); return; }
     setOutput(r.output);
-    // Check if output matches expected (if expected is set)
-    if (ch.expected_output && r.output.trim() === ch.expected_output.trim()) {
-      const np = [...passed]; np[curIdx] = true; setPassed(np);
-      showXp(10);
-      if (np.every(Boolean)) { api('/activities/'+a.id+'/score','POST',{score:a.challenges.length,maxScore:a.challenges.length}); boom(); }
-    } else if (!ch.expected_output && r.output.trim().length > 0) {
-      // For open-ended challenges (no expected output), any output = pass
-      const np = [...passed]; np[curIdx] = true; setPassed(np);
-      showXp(10);
-      if (np.every(Boolean)) { api('/activities/'+a.id+'/score','POST',{score:a.challenges.length,maxScore:a.challenges.length}); boom(); }
+    // Hard accepts ANY code that produces the matching output
+    const passedNow = ch.expected_output && r.output.trim() === ch.expected_output.trim();
+    if (passedNow) {
+      const np = [...passed];
+      const wasFirstPass = !np.some(Boolean);
+      np[curIdx] = true;
+      setPassed(np);
+      const reward = ch.difficulty === 'hard' ? 25 : ch.difficulty === 'medium' ? 15 : 10;
+      showXp(reward);
+      // Submit score the first time anything passes (so the lesson can complete)
+      if (wasFirstPass) {
+        api('/activities/' + a.id + '/score', 'POST', { score: 1, maxScore: 1 });
+        boom();
+      }
     }
   }
 
-  function updateCode(val) { const n=[...codes]; n[curIdx]=val; setCodes(n); }
+  function updateCode(val) { const n = [...codes]; n[curIdx] = val; setCodes(n); }
+
+  function switchTo(i) {
+    setCurIdx(i);
+    setOutput('');
+    setError('');
+    setShowHint(false);
+  }
 
   return (
     <div className="acard ide-card">
       <div className="acard-head">
         <h3>🐍 {a.title}</h3>
-        <div className="challenge-nav">
-          <span className="cnav-label">Challenge {curIdx+1} of {a.challenges.length}</span>
-          <div className="challenge-dots">
-            {a.challenges.map((_,i)=>(
-              <span
-                key={i}
-                className={`cdot${passed[i]?' cdone':''}${i===curIdx?' cactive':''}`}
-                title={`Jump to challenge ${i+1}`}
-                onClick={()=>{setCurIdx(i);setOutput('');setError('');setShowHint(false);}}
-              >{passed[i] ? '✓' : i+1}</span>
-            ))}
-          </div>
-        </div>
+      </div>
+
+      <div className="diff-tabs">
+        {sortedChallenges.map((c, i) => {
+          const d = DIFFICULTY_LABELS[c.difficulty] || DIFFICULTY_LABELS.easy;
+          return (
+            <button
+              key={i}
+              className={`diff-tab diff-${c.difficulty}${i === curIdx ? ' active' : ''}${passed[i] ? ' done' : ''}`}
+              onClick={() => switchTo(i)}
+            >
+              <span className="diff-icon">{d.icon}</span>
+              <span className="diff-label">{d.label}</span>
+              <span className="diff-sub">{d.sub}</span>
+              {passed[i] && <span className="diff-check">✅</span>}
+            </button>
+          );
+        })}
       </div>
 
       <div className="ide-instructions">
         <p>{ch.instructions}</p>
-        {!showHint && <button className="hint-btn" onClick={()=>setShowHint(true)}>💡 Show Hint</button>}
+        {!showHint && <button className="hint-btn" onClick={() => setShowHint(true)}>💡 Show Hint</button>}
         {showHint && <p className="hint-text">💡 {ch.hint}</p>}
       </div>
 
       <div className="ide-editor">
-        <div className="ide-header"><span className="ide-dot red"/><span className="ide-dot yellow"/><span className="ide-dot green"/><span className="ide-title">Python Editor</span></div>
-        <textarea className="ide-code" value={codes[curIdx]} onChange={e=>updateCode(e.target.value)} spellCheck={false} rows={Math.max(4, codes[curIdx].split('\n').length+1)}/>
+        <div className="ide-header">
+          <span className="ide-dot red"/><span className="ide-dot yellow"/><span className="ide-dot green"/>
+          <span className="ide-title">Python Editor</span>
+        </div>
+        <textarea
+          className="ide-code"
+          value={codes[curIdx]}
+          onChange={e => updateCode(e.target.value)}
+          spellCheck={false}
+          rows={Math.max(4, (codes[curIdx] || '').split('\n').length + 1)}
+          placeholder={ch.difficulty === 'hard' ? 'Type your Python code here...' : ''}
+        />
       </div>
 
       <div className="ide-controls">
-        <button className={`run-btn${running?' running':''}`} onClick={runCode} disabled={running}>{running ? '⏳ Running...' : '▶️ Run Code!'}</button>
-        <button className="reset-btn" onClick={()=>{updateCode(ch.starter_code);setOutput('');setError('');}}>🔄 Reset</button>
+        <button className={`run-btn${running ? ' running' : ''}`} onClick={runCode} disabled={running}>
+          {running ? '⏳ Running...' : '▶️ Run Code!'}
+        </button>
+        <button className="reset-btn" onClick={() => { updateCode(ch.starter_code); setOutput(''); setError(''); }}>🔄 Reset</button>
       </div>
 
       <div className="ide-output">
@@ -1270,20 +1322,18 @@ function CodeChallenge({ a, t, showXp, boom, next }) {
           {error && <span className="out-err">{error}</span>}
           {!output && !error && <span className="out-dim">Press Run to see what happens!</span>}
         </pre>
-        {passed[curIdx] && <div className="out-pass">✅ Challenge {curIdx+1} complete!</div>}
-        {output && !passed[curIdx] && ch.expected_output && <div className="out-try">Not quite! Expected: <code>{ch.expected_output.trim()}</code></div>}
+        {passed[curIdx] && <div className="out-pass">✅ {DIFFICULTY_LABELS[ch.difficulty].label} level complete!</div>}
+        {output && !passed[curIdx] && ch.expected_output && (
+          <div className="out-try">Not quite! Your output should be exactly: <code>{ch.expected_output.trim()}</code></div>
+        )}
       </div>
 
-      {passed[curIdx] && curIdx < a.challenges.length - 1 && (
+      {anyDone && (
         <div className="next-challenge">
-          <p>🎉 Nice! Ready for the next one?</p>
-          <button className="btn-go big-btn" onClick={()=>{setCurIdx(curIdx+1);setOutput('');setError('');setShowHint(false);}}>
-            Next Challenge →
-          </button>
+          <p>🎉 You did it! Want to try a harder level, or move on?</p>
+          <button className="btn-go big-btn" onClick={next}>Continue →</button>
         </div>
       )}
-
-      {allDone && <div className="gdone">{t.correct} All challenges done!<button className="btn-go" onClick={next}>Continue →</button></div>}
     </div>
   );
 }

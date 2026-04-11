@@ -272,6 +272,7 @@ async function init() {
       starter_code TEXT NOT NULL,
       expected_output TEXT NOT NULL,
       hint TEXT NOT NULL DEFAULT '',
+      difficulty TEXT NOT NULL DEFAULT 'easy' CHECK(difficulty IN ('easy','medium','hard')),
       sort_order INTEGER NOT NULL DEFAULT 0
     );
 
@@ -357,7 +358,75 @@ async function init() {
     // Allow promptpractice activity type on existing DBs
     await pool.query("ALTER TABLE activities DROP CONSTRAINT IF EXISTS activities_activity_type_check");
     await pool.query("ALTER TABLE activities ADD CONSTRAINT activities_activity_type_check CHECK(activity_type IN ('video','match','sort','truefalse','codebuilder','fillinblank','codechallenge','minigame','promptpractice'))");
+    // Code challenges get difficulty
+    await pool.query("ALTER TABLE activity_code_challenges ADD COLUMN IF NOT EXISTS difficulty TEXT NOT NULL DEFAULT 'easy'");
+    await pool.query("ALTER TABLE activity_code_challenges DROP CONSTRAINT IF EXISTS activity_code_challenges_difficulty_check");
+    await pool.query("ALTER TABLE activity_code_challenges ADD CONSTRAINT activity_code_challenges_difficulty_check CHECK(difficulty IN ('easy','medium','hard'))");
   } catch (e) { console.warn('Migrations:', e.message); }
+
+  // ---------- MIGRATION: REDESIGN CODE CHALLENGES INTO 3 DIFFICULTY LEVELS ----------
+  try {
+    const usesNewFormat = (await pool.query("SELECT COUNT(*)::int AS c FROM activity_code_challenges WHERE starter_code LIKE '%TYPE HERE%'")).rows[0].c > 0;
+    if (!usesNewFormat) {
+      // Define 3-level versions keyed by activity title (matches what's in the seed below)
+      const CODE_LEVELS = {
+        'Make Python Say Hello!': [
+          { difficulty: 'easy', instructions: 'EASY: Replace <TYPE HERE> with the word Hello! (keep the quotes)', starter: 'print(<TYPE HERE>)\n', hint: 'Type "Hello!" between the parentheses (with the quotes!)' },
+          { difficulty: 'medium', instructions: 'MEDIUM: Write the line that prints Hello! Use print()', starter: '# Print Hello! below using print()\n<TYPE HERE>\n', hint: 'It looks like: print("Hello!")' },
+          { difficulty: 'hard', instructions: 'HARD: Write code that prints exactly: Hello!', starter: '', hint: 'Use the print() function with the text Hello! in quotes' },
+        ],
+        'Create Variables!': [
+          { difficulty: 'easy', instructions: 'EASY: Replace <TYPE HERE> with "blue" (with quotes!) so it prints My favorite color is blue', starter: 'color = <TYPE HERE>\nprint("My favorite color is " + color)\n', hint: 'Type "blue" — including the quotes' },
+          { difficulty: 'medium', instructions: 'MEDIUM: Write the variable assignment that stores "blue" in color', starter: '<TYPE HERE>\nprint("My favorite color is " + color)\n', hint: 'It looks like: color = "blue"' },
+          { difficulty: 'hard', instructions: 'HARD: Write code that prints exactly: My favorite color is blue', starter: '', hint: 'Use a variable called color and the + symbol to join words' },
+        ],
+        'Build Loops!': [
+          { difficulty: 'easy', instructions: 'EASY: Replace <TYPE HERE> with the number 3 so Hi! prints three times', starter: 'for i in range(<TYPE HERE>):\n    print("Hi!")\n', hint: 'Just type 3' },
+          { difficulty: 'medium', instructions: 'MEDIUM: Write the for line so it loops 3 times', starter: '<TYPE HERE>:\n    print("Hi!")\n', hint: 'It looks like: for i in range(3)' },
+          { difficulty: 'hard', instructions: 'HARD: Write code that prints Hi! three times', starter: '', hint: 'A for loop with range(3) will repeat 3 times' },
+        ],
+        'Code Decisions!': [
+          { difficulty: 'easy', instructions: 'EASY: Replace <TYPE HERE> with a number 100 or higher so it prints You win!', starter: 'score = <TYPE HERE>\nif score >= 100:\n    print("You win!")\nelse:\n    print("Keep trying!")\n', hint: 'Try 100 or 200' },
+          { difficulty: 'medium', instructions: 'MEDIUM: Write the if line that checks if score is 100 or more', starter: 'score = 200\n<TYPE HERE>:\n    print("You win!")\nelse:\n    print("Keep trying!")\n', hint: 'It looks like: if score >= 100' },
+          { difficulty: 'hard', instructions: 'HARD: Write code that prints You win!', starter: '', hint: 'You can just print it directly, or use a variable + if statement' },
+        ],
+        'Train a Mini AI!': [
+          { difficulty: 'easy', instructions: 'EASY: Set number to 50 or higher so the AI says BIG!', starter: 'number = <TYPE HERE>\nif number >= 50:\n    print("AI says: BIG number!")\nelse:\n    print("AI says: small number")\n', hint: 'Try 50, 100, or 999' },
+          { difficulty: 'medium', instructions: 'MEDIUM: Write the if line that checks if number is 50 or more', starter: 'number = 75\n<TYPE HERE>:\n    print("AI says: BIG number!")\nelse:\n    print("AI says: small number")\n', hint: 'It looks like: if number >= 50' },
+          { difficulty: 'hard', instructions: 'HARD: Write code that prints exactly: AI says: BIG number!', starter: '', hint: 'Just use print() with the message' },
+        ],
+        'Code a Prompt Builder!': [
+          { difficulty: 'easy', instructions: 'EASY: Set topic to a word like "space" so the prompt builds correctly', starter: 'topic = <TYPE HERE>\nprompt = "Tell me 3 fun facts about " + topic\nprint(prompt)\n', hint: 'Try "space" or "robots" (with quotes)' },
+          { difficulty: 'medium', instructions: 'MEDIUM: Write the variable line that stores "robots" in topic', starter: '<TYPE HERE>\nprompt = "Tell me 3 fun facts about " + topic\nprint(prompt)\n', hint: 'It looks like: topic = "robots"' },
+          { difficulty: 'hard', instructions: 'HARD: Write code that prints exactly: Tell me 3 fun facts about robots', starter: '', hint: 'You can just print the whole sentence directly!' },
+        ],
+      };
+      const codeActs = (await pool.query("SELECT id, title FROM activities WHERE activity_type = 'codechallenge'")).rows;
+      for (const ca of codeActs) {
+        const levels = CODE_LEVELS[ca.title];
+        if (!levels) continue;
+        // Wipe old challenges (and any user scores tied to this activity will become orphaned, which is OK)
+        await pool.query('DELETE FROM activity_code_challenges WHERE activity_id = $1', [ca.id]);
+        for (let i = 0; i < levels.length; i++) {
+          const lv = levels[i];
+          // Expected output is the same for all levels of an activity
+          const expected = ({
+            'Make Python Say Hello!': 'Hello!\n',
+            'Create Variables!': 'My favorite color is blue\n',
+            'Build Loops!': 'Hi!\nHi!\nHi!\n',
+            'Code Decisions!': 'You win!\n',
+            'Train a Mini AI!': 'AI says: BIG number!\n',
+            'Code a Prompt Builder!': 'Tell me 3 fun facts about robots\n',
+          })[ca.title] || '';
+          await pool.query(
+            'INSERT INTO activity_code_challenges (activity_id, instructions, starter_code, expected_output, hint, difficulty, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [ca.id, lv.instructions, lv.starter, expected, lv.hint, lv.difficulty, i + 1]
+          );
+        }
+      }
+      console.log('✓ Migrated code challenges to 3-level format');
+    }
+  } catch (e) { console.warn('Code challenge migration:', e.message); }
 
   // ---------- SEED ADMIN USER ----------
   try {
