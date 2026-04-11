@@ -345,9 +345,9 @@ function Main({ user, setUser }) {
       </header>
       <nav>
         <button className={view==='home'?'on':''} onClick={()=>{setView('home');setUniverse(null);setWorld(null);setLesson(null);}}>🌌 Universes</button>
+        <button className={'nav-game-btn ' + (view==='studio'?'on':'')} onClick={()=>setView('studio')}>🎮 My Games</button>
         <button className={view==='shop'?'on':''} onClick={()=>setView('shop')}>🛒 Shop</button>
         <button className={view==='progress'?'on':''} onClick={()=>setView('progress')}>📊 Progress</button>
-        <button className={view==='studio'?'on':''} onClick={()=>setView('studio')}>🎮 My Games</button>
         <button className={view==='feature'?'on':''} onClick={()=>setView('feature')}>💡 Ideas</button>
       </nav>
       <main>
