@@ -405,14 +405,19 @@ main{padding:16px;max-width:800px;margin:0 auto}
 .vid-wrap{position:relative;padding-bottom:56.25%;height:0;border-radius:12px;overflow:hidden;margin-bottom:14px}
 .vid-wrap iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:none}
 
-/* MATCH GAME */
-.match-board{display:flex;gap:14px}
-.match-col{flex:1;display:flex;flex-direction:column;gap:7px}
-.mi{padding:11px 12px;border-radius:10px;border:2px solid rgba(255,255,255,.1);cursor:pointer;font-size:.88rem;transition:all .2s;text-align:center}
-.mi:hover{border-color:var(--accent);background:rgba(255,255,255,.03)}
-.mi.pick{border-color:var(--accent);background:rgba(255,255,255,.06);box-shadow:0 0 14px var(--glow)}
-.mi.got{border-color:#4caf50;background:rgba(76,175,80,.12);opacity:.6;pointer-events:none}
-.mi.bad{border-color:#f44336;background:rgba(244,67,54,.12);animation:shake .4s ease}
+/* MATCH GAME (drag & drop) */
+.match-board{display:flex;gap:18px}
+.match-col{flex:1;display:flex;flex-direction:column;gap:8px}
+.match-label{font-size:.72rem;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;font-weight:700;text-align:center;margin-bottom:4px}
+.mi{padding:14px 14px;border-radius:12px;border:2px solid rgba(255,255,255,.15);font-size:.95rem;text-align:center;font-weight:600;user-select:none;transition:all .15s}
+.mi.term{cursor:grab;background:var(--card);box-shadow:0 2px 8px rgba(0,0,0,.25)}
+.mi.term:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 4px 14px var(--glow)}
+.mi.term:active{cursor:grabbing}
+.mi.term.dragging{cursor:grabbing;opacity:.85;border-color:var(--accent);box-shadow:0 8px 24px var(--glow);transform:scale(1.04)}
+.mi.def.droppable{background:rgba(255,255,255,.04);border-style:dashed;min-height:54px;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.mi.def.droppable.hover{border-color:var(--accent);background:rgba(255,255,255,.12);border-style:solid;transform:scale(1.02);box-shadow:inset 0 0 20px var(--glow)}
+.mi.got{border-color:#4caf50!important;background:rgba(76,175,80,.18)!important;color:#fff;border-style:solid!important;cursor:default!important;pointer-events:none;box-shadow:0 0 14px rgba(76,175,80,.35)!important;transform:none!important}
+.mi.bad{border-color:#f44336!important;background:rgba(244,67,54,.25)!important;animation:shake .4s ease}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
 
 /* SORT (drag and drop) */

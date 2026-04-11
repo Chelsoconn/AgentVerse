@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { DndContext, closestCenter, PointerSensor, TouchSensor, KeyboardSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { DndContext, closestCenter, PointerSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, useDraggable, useDroppable } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import './App.css';
@@ -873,48 +873,106 @@ function Video({ a, next }) {
 }
 
 // ===================== MATCH GAME =====================
+function DraggableTerm({ pair, matched, wrong }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: 'term-' + pair.id,
+    data: { pairId: pair.id },
+    disabled: matched,
+  });
+  const style = transform
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: isDragging ? 100 : 1 }
+    : {};
+  let cls = 'mi term';
+  if (matched) cls += ' got';
+  if (isDragging) cls += ' dragging';
+  if (wrong) cls += ' bad';
+  return (
+    <div ref={setNodeRef} style={style} className={cls} {...listeners} {...attributes}>
+      {pair.term}
+    </div>
+  );
+}
+
+function DroppableDef({ pair, matched, wrong, isOver }) {
+  const { isOver: hover, setNodeRef } = useDroppable({
+    id: 'def-' + pair.id,
+    data: { pairId: pair.id },
+    disabled: matched,
+  });
+  let cls = 'mi def droppable';
+  if (matched) cls += ' got';
+  if (hover) cls += ' hover';
+  if (wrong) cls += ' bad';
+  return (
+    <div ref={setNodeRef} className={cls}>
+      {pair.definition}
+    </div>
+  );
+}
+
 function MatchGame({ a, t, showXp, boom, next }) {
-  const [sel, setSel] = useState(null);
   const [matched, setMatched] = useState(new Set());
-  const [wrongFlash, setWrongFlash] = useState(null);
+  const [wrongTerm, setWrongTerm] = useState(null);
+  const [wrongDef, setWrongDef] = useState(null);
   const [shuffled, setShuffled] = useState([]);
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    setShuffled([...a.pairs].sort(()=>Math.random()-0.5));
+    setShuffled([...a.pairs].sort(() => Math.random() - 0.5));
+    setMatched(new Set());
+    setDone(false);
   }, [a.id]);
 
-  function click(type, idx) {
-    if (done) return;
-    const id = type==='term' ? a.pairs[idx].id : shuffled[idx].id;
-    if (matched.has(id)) return;
-    if (!sel) return setSel({type,idx});
-    if (sel.type===type) return setSel({type,idx});
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 100, tolerance: 8 } }),
+  );
 
-    const ti = type==='term'?idx:sel.idx, di = type==='def'?idx:sel.idx;
-    const tid = a.pairs[ti].id, did = shuffled[di].id;
-    if (tid===did) {
-      const nm = new Set(matched); nm.add(tid); setMatched(nm); setSel(null);
-      if (nm.size===a.pairs.length) { setDone(true); api('/activities/'+a.id+'/score','POST',{score:a.pairs.length,maxScore:a.pairs.length}); showXp(a.pairs.length*10); boom(); }
+  function handleDragEnd(event) {
+    const { active, over } = event;
+    if (!over) return;
+    const termId = active.data.current?.pairId;
+    const defId = over.data.current?.pairId;
+    if (termId == null || defId == null) return;
+
+    if (termId === defId) {
+      const nm = new Set(matched);
+      nm.add(termId);
+      setMatched(nm);
+      if (nm.size === a.pairs.length) {
+        setDone(true);
+        api('/activities/' + a.id + '/score', 'POST', { score: a.pairs.length, maxScore: a.pairs.length });
+        showXp(a.pairs.length * 10);
+        boom();
+      }
     } else {
-      setWrongFlash({ti,di}); setTimeout(()=>{setWrongFlash(null);setSel(null);},500);
+      // Wrong drop — flash both red briefly, then snap back
+      setWrongTerm(termId);
+      setWrongDef(defId);
+      setTimeout(() => { setWrongTerm(null); setWrongDef(null); }, 700);
     }
   }
 
   return (
     <div className="acard">
       <div className="acard-head"><h3>🔗 {a.title}</h3></div>
-      <p className="adesc">{a.description}</p>
-      <div className="match-board">
-        <div className="match-col">{a.pairs.map((p,i)=>{
-          let c='mi'; if(matched.has(p.id))c+=' got'; if(sel?.type==='term'&&sel.idx===i)c+=' pick'; if(wrongFlash?.ti===i)c+=' bad';
-          return <div key={p.id} className={c} onClick={()=>click('term',i)}>{p.term}</div>;
-        })}</div>
-        <div className="match-col">{shuffled.map((p,i)=>{
-          let c='mi def'; if(matched.has(p.id))c+=' got'; if(sel?.type==='def'&&sel.idx===i)c+=' pick'; if(wrongFlash?.di===i)c+=' bad';
-          return <div key={p.id+'d'} className={c} onClick={()=>click('def',i)}>{p.definition}</div>;
-        })}</div>
-      </div>
+      <p className="adesc">{a.description} <span className="drag-hint">↔️ Drag each word to its match!</span></p>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <div className="match-board">
+          <div className="match-col">
+            <div className="match-label">Words</div>
+            {a.pairs.map(p => (
+              <DraggableTerm key={'t'+p.id} pair={p} matched={matched.has(p.id)} wrong={wrongTerm === p.id}/>
+            ))}
+          </div>
+          <div className="match-col">
+            <div className="match-label">Drop here</div>
+            {shuffled.map(p => (
+              <DroppableDef key={'d'+p.id} pair={p} matched={matched.has(p.id)} wrong={wrongDef === p.id}/>
+            ))}
+          </div>
+        </div>
+      </DndContext>
       {done && <div className="gdone">{t.correct} <button className="btn-go" onClick={next}>Next →</button></div>}
     </div>
   );
