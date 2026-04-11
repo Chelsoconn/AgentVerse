@@ -345,9 +345,9 @@ function Main({ user, setUser }) {
       </header>
       <nav>
         <button className={view==='home'?'on':''} onClick={()=>{setView('home');setUniverse(null);setWorld(null);setLesson(null);}}>🌌 Universes</button>
-        <button className={view==='studio'?'on':''} onClick={()=>setView('studio')}>🎮 My Games</button>
         <button className={view==='shop'?'on':''} onClick={()=>setView('shop')}>🛒 Shop</button>
         <button className={view==='progress'?'on':''} onClick={()=>setView('progress')}>📊 Progress</button>
+        <button className={view==='studio'?'on':''} onClick={()=>setView('studio')}>🎮 My Games</button>
         <button className={view==='feature'?'on':''} onClick={()=>setView('feature')}>💡 Ideas</button>
       </nav>
       <main>
@@ -638,17 +638,23 @@ function GameStudio({ t, back, user, refreshUser }) {
               </>
             )}
           </div>
-          {status.sessions.length > 0 && (
-            <div className="studio-saved">
-              <h3>Games You've Made</h3>
-              {status.sessions.map(s => (
+          <div className="studio-saved">
+            <h3>Games You've Made</h3>
+            {status.sessions.length > 0 ? (
+              status.sessions.map(s => (
                 <div key={s.id} className="saved-game" onClick={() => loadSession(s.id)}>
                   <span className="sg-title">🎮 {s.title}</span>
                   <span className="sg-meta">{s.iteration_count}/3 refinements · click to play</span>
                 </div>
-              ))}
-            </div>
-          )}
+              ))
+            ) : (
+              <div className="no-games">
+                <div className="no-games-icon">🎨</div>
+                <p><strong>No games yet!</strong></p>
+                <p className="no-games-sub">{credits > 0 ? 'Use the form above to create your first game!' : 'Buy an Extra Game Pass in the Shop to start making games.'}</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
