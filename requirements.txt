@@ -1,0 +1,2 @@
+# Empty - we just need Python 3 available for the kid code runner.
+# The Python buildpack installs python3 even with no packages.
