@@ -24,10 +24,29 @@ async function withUser(userId, fn) {
   try {
     await client.query('BEGIN');
     if (needsRoleSwitch) {
-      // Drop superuser privileges so RLS policies actually apply.
       await client.query('SET LOCAL ROLE learning_app_user');
     }
     await client.query(`SELECT set_config('app.user_id', $1, true)`, [String(userId)]);
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+// Admin context — bypasses RLS via an admin policy keyed on app.is_admin
+async function withAdmin(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (needsRoleSwitch) {
+      await client.query('SET LOCAL ROLE learning_app_user');
+    }
+    await client.query(`SELECT set_config('app.is_admin', 'true', true)`);
     const result = await fn(client);
     await client.query('COMMIT');
     return result;
@@ -107,10 +126,21 @@ async function init() {
       password_hash TEXT NOT NULL,
       display_name TEXT NOT NULL,
       theme_id INTEGER REFERENCES themes(id),
-      age INTEGER CHECK(age BETWEEN 8 AND 12),
+      age INTEGER,
       active_background TEXT NOT NULL DEFAULT '',
       active_background_emojis TEXT NOT NULL DEFAULT '',
       active_background_animation TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','denied')),
+      is_admin BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    -- Feature requests from users
+    CREATE TABLE IF NOT EXISTS feature_requests (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      body TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','seen','done','rejected')),
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
 
@@ -291,6 +321,38 @@ async function init() {
     );
   `);
 
+  // ---------- MIGRATIONS for columns added after initial deploy ----------
+  try {
+    // Add columns if missing, then set defaults for new columns
+    const hadStatus = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='status'")).rows.length > 0;
+    if (!hadStatus) {
+      await pool.query("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'");
+      // All existing users are approved (backwards compat); new column default is pending moving forward
+      await pool.query("ALTER TABLE users ALTER COLUMN status SET DEFAULT 'pending'");
+    }
+    await pool.query("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_status_check");
+    await pool.query("ALTER TABLE users ADD CONSTRAINT users_status_check CHECK(status IN ('pending','approved','denied'))");
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false");
+    await pool.query("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_age_check");
+  } catch (e) { console.warn('User migrations:', e.message); }
+
+  // ---------- SEED ADMIN USER ----------
+  try {
+    const bcrypt = require('bcryptjs');
+    const existingAdmin = (await pool.query("SELECT id FROM users WHERE username = 'chelsea'")).rows[0];
+    if (!existingAdmin) {
+      const hash = bcrypt.hashSync('Ck57320!', 10);
+      await pool.query(
+        "INSERT INTO users (username, password_hash, display_name, age, status, is_admin) VALUES ('chelsea', $1, 'Chelsea', 30, 'approved', true)",
+        [hash]
+      );
+      console.log('✓ Seeded admin user: chelsea');
+    } else {
+      // Ensure existing chelsea user has admin + approved
+      await pool.query("UPDATE users SET is_admin = true, status = 'approved' WHERE username = 'chelsea'");
+    }
+  } catch (e) { console.warn('Admin seed:', e.message); }
+
   // ---------- GRANT TABLE ACCESS TO learning_app_user (only if we created it) ----------
   if (needsRoleSwitch) {
     try {
@@ -334,7 +396,7 @@ async function init() {
     }
   }
 
-  // Users table: each user can only see their own row
+  // Users table: each user can only see their own row, admins see all
   try {
     await pool.query(`ALTER TABLE users ENABLE ROW LEVEL SECURITY`);
     try { await pool.query(`ALTER TABLE users FORCE ROW LEVEL SECURITY`); } catch {}
@@ -344,7 +406,31 @@ async function init() {
         USING (id = NULLIF(current_setting('app.user_id', true), '')::int OR NULLIF(current_setting('app.user_id', true), '') IS NULL)
         WITH CHECK (id = NULLIF(current_setting('app.user_id', true), '')::int OR NULLIF(current_setting('app.user_id', true), '') IS NULL)
     `);
+    await pool.query(`DROP POLICY IF EXISTS users_admin ON users`);
+    await pool.query(`
+      CREATE POLICY users_admin ON users
+        USING (current_setting('app.is_admin', true) = 'true')
+        WITH CHECK (current_setting('app.is_admin', true) = 'true')
+    `);
   } catch (e) { console.warn('Users RLS setup failed:', e.message); }
+
+  // Feature requests: users see their own, admins see all
+  try {
+    await pool.query(`ALTER TABLE feature_requests ENABLE ROW LEVEL SECURITY`);
+    try { await pool.query(`ALTER TABLE feature_requests FORCE ROW LEVEL SECURITY`); } catch {}
+    await pool.query(`DROP POLICY IF EXISTS feature_requests_self ON feature_requests`);
+    await pool.query(`
+      CREATE POLICY feature_requests_self ON feature_requests
+        USING (user_id = NULLIF(current_setting('app.user_id', true), '')::int)
+        WITH CHECK (user_id = NULLIF(current_setting('app.user_id', true), '')::int)
+    `);
+    await pool.query(`DROP POLICY IF EXISTS feature_requests_admin ON feature_requests`);
+    await pool.query(`
+      CREATE POLICY feature_requests_admin ON feature_requests
+        USING (current_setting('app.is_admin', true) = 'true')
+        WITH CHECK (current_setting('app.is_admin', true) = 'true')
+    `);
+  } catch (e) { console.warn('Feature requests RLS setup failed:', e.message); }
 
   // ---------- SEED ----------
   const { rows: catRows } = await pool.query('SELECT COUNT(*)::int AS c FROM categories');
@@ -643,4 +729,4 @@ async function init() {
   }
 }
 
-module.exports = { pool, init, withUser };
+module.exports = { pool, init, withUser, withAdmin };

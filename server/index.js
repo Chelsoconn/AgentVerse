@@ -7,7 +7,7 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const Anthropic = require('@anthropic-ai/sdk');
-const { pool, init, withUser } = require('./db');
+const { pool, init, withUser, withAdmin } = require('./db');
 
 const anthropic = new Anthropic();
 const MAX_ITERATIONS = 3;
@@ -83,6 +83,17 @@ function auth(req, res, next) {
   next();
 }
 
+async function adminAuth(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: 'Not logged in' });
+  try {
+    const u = await withAdmin(async c =>
+      (await c.query('SELECT is_admin FROM users WHERE id = $1', [req.session.userId])).rows[0]
+    );
+    if (!u || !u.is_admin) return res.status(403).json({ error: 'Admin only' });
+    next();
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+}
+
 // Helper: run a query against the public pool (no RLS user context)
 async function pq(text, params) { return (await pool.query(text, params)).rows; }
 async function pq1(text, params) { return (await pool.query(text, params)).rows[0]; }
@@ -92,20 +103,16 @@ app.post('/api/register', async (req, res) => {
   try {
     const { username, password, displayName, age, theme } = req.body;
     if (!username || !password || !displayName || !age) return res.status(400).json({ error: 'All fields required' });
-    const count = (await pq1('SELECT COUNT(*)::int AS c FROM users')).c;
-    if (count >= 10) return res.status(400).json({ error: 'Max 10 users reached' });
     if (await pq1('SELECT id FROM users WHERE username = $1', [username])) return res.status(400).json({ error: 'Username taken' });
     const themeRow = await pq1('SELECT id FROM themes WHERE code = $1', [theme || 'crocodile']);
     if (!themeRow) return res.status(400).json({ error: 'Invalid theme' });
     const hash = bcrypt.hashSync(password, 10);
-    const u = await pq1(
-      'INSERT INTO users (username,password_hash,display_name,age,theme_id) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+    await pq1(
+      "INSERT INTO users (username,password_hash,display_name,age,theme_id,status) VALUES ($1,$2,$3,$4,$5,'pending') RETURNING id",
       [username, hash, displayName, age, themeRow.id]
     );
-    // Init XP row (uses RLS context)
-    await withUser(u.id, c => c.query('INSERT INTO user_xp (user_id,xp,level,streak) VALUES ($1,0,1,0)', [u.id]));
-    req.session.userId = u.id;
-    res.json({ id: u.id, displayName, theme: theme || 'crocodile' });
+    // Do NOT log in — admin must approve
+    res.json({ pending: true, message: 'Account created! An admin needs to approve you before you can log in.' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -114,11 +121,15 @@ app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     const u = await pq1('SELECT u.*, t.code AS theme_code FROM users u LEFT JOIN themes t ON t.id = u.theme_id WHERE username = $1', [username]);
     if (!u || !bcrypt.compareSync(password, u.password_hash)) return res.status(401).json({ error: 'Wrong username or password' });
+    if (u.status === 'pending') return res.status(403).json({ error: 'Your account is waiting for admin approval.' });
+    if (u.status === 'denied') return res.status(403).json({ error: 'Your account was not approved. Please contact the admin.' });
     req.session.userId = u.id;
-    // Ensure XP row exists
-    const exists = await withUser(u.id, async c => (await c.query('SELECT id FROM user_xp WHERE user_id = $1', [u.id])).rows[0]);
-    if (!exists) await withUser(u.id, c => c.query('INSERT INTO user_xp (user_id,xp,level,streak) VALUES ($1,0,1,0)', [u.id]));
-    res.json({ id: u.id, displayName: u.display_name, theme: u.theme_code });
+    // Ensure XP row exists (only for non-admins)
+    if (!u.is_admin) {
+      const exists = await withUser(u.id, async c => (await c.query('SELECT id FROM user_xp WHERE user_id = $1', [u.id])).rows[0]);
+      if (!exists) await withUser(u.id, c => c.query('INSERT INTO user_xp (user_id,xp,level,streak) VALUES ($1,0,1,0)', [u.id]));
+    }
+    res.json({ id: u.id, displayName: u.display_name, theme: u.theme_code, isAdmin: u.is_admin });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -128,7 +139,7 @@ app.get('/api/me', auth, async (req, res) => {
   try {
     const data = await withUser(req.session.userId, async c => {
       const u = (await c.query(
-        'SELECT u.id, u.username, u.display_name, u.age, u.active_background, u.active_background_emojis, u.active_background_animation, t.code AS theme FROM users u LEFT JOIN themes t ON t.id = u.theme_id WHERE u.id = $1',
+        'SELECT u.id, u.username, u.display_name, u.age, u.active_background, u.active_background_emojis, u.active_background_animation, u.is_admin, t.code AS theme FROM users u LEFT JOIN themes t ON t.id = u.theme_id WHERE u.id = $1',
         [req.session.userId]
       )).rows[0];
       if (!u) return null;
@@ -797,6 +808,93 @@ app.post('/api/shop/use-theme', auth, async (req, res) => {
       'UPDATE users SET theme_id = $1, active_background = $2, active_background_emojis = $3, active_background_animation = $4 WHERE id = $5',
       [t.id, '', '', '', req.session.userId]
     ));
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+// ================== ADMIN ==================
+app.get('/api/admin/users', adminAuth, async (req, res) => {
+  try {
+    const users = await withAdmin(async c => (await c.query(`
+      SELECT u.id, u.username, u.display_name, u.age, u.status, u.is_admin, u.created_at,
+             t.code AS theme,
+             COALESCE(x.xp, 0) AS xp, COALESCE(x.level, 1) AS level, COALESCE(x.tokens, 0) AS tokens
+      FROM users u
+      LEFT JOIN themes t ON t.id = u.theme_id
+      LEFT JOIN user_xp x ON x.user_id = u.id
+      ORDER BY u.status ASC, u.created_at DESC
+    `)).rows);
+    res.json(users);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+app.post('/api/admin/users/:id/approve', adminAuth, async (req, res) => {
+  try {
+    await withAdmin(async c => {
+      await c.query("UPDATE users SET status = 'approved' WHERE id = $1", [req.params.id]);
+      // Create XP row if it doesn't exist yet
+      await c.query('INSERT INTO user_xp (user_id, xp, level, streak, tokens) VALUES ($1, 0, 1, 0, 0) ON CONFLICT (user_id) DO NOTHING', [req.params.id]);
+    });
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+app.post('/api/admin/users/:id/deny', adminAuth, async (req, res) => {
+  try {
+    await withAdmin(c => c.query("UPDATE users SET status = 'denied' WHERE id = $1", [req.params.id]));
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+app.delete('/api/admin/users/:id', adminAuth, async (req, res) => {
+  try {
+    // Don't let admin delete themselves
+    if (Number(req.params.id) === req.session.userId) return res.status(400).json({ error: "You can't delete yourself" });
+    await withAdmin(async c => {
+      // Delete dependent rows first
+      await c.query('DELETE FROM user_quiz_answers WHERE user_id = $1', [req.params.id]);
+      await c.query('DELETE FROM user_activity_scores WHERE user_id = $1', [req.params.id]);
+      await c.query('DELETE FROM user_lesson_progress WHERE user_id = $1', [req.params.id]);
+      await c.query('DELETE FROM user_achievements WHERE user_id = $1', [req.params.id]);
+      await c.query('DELETE FROM user_game_iterations WHERE user_id = $1', [req.params.id]);
+      await c.query('DELETE FROM user_game_sessions WHERE user_id = $1', [req.params.id]);
+      await c.query('DELETE FROM user_purchases WHERE user_id = $1', [req.params.id]);
+      await c.query('DELETE FROM user_xp WHERE user_id = $1', [req.params.id]);
+      await c.query('DELETE FROM feature_requests WHERE user_id = $1', [req.params.id]);
+      await c.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+    });
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+// ================== FEATURE REQUESTS ==================
+app.post('/api/feature-requests', auth, async (req, res) => {
+  try {
+    const { body } = req.body;
+    if (!body || body.trim().length < 5 || body.length > 500) return res.status(400).json({ error: 'Please write 5-500 characters' });
+    await withUser(req.session.userId, c => c.query(
+      'INSERT INTO feature_requests (user_id, body) VALUES ($1, $2)', [req.session.userId, body.trim()]
+    ));
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+app.get('/api/admin/feature-requests', adminAuth, async (req, res) => {
+  try {
+    const list = await withAdmin(async c => (await c.query(`
+      SELECT fr.id, fr.body, fr.status, fr.created_at, u.username, u.display_name
+      FROM feature_requests fr JOIN users u ON u.id = fr.user_id
+      ORDER BY fr.created_at DESC
+    `)).rows);
+    res.json(list);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+app.put('/api/admin/feature-requests/:id', adminAuth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!['open','seen','done','rejected'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    await withAdmin(c => c.query('UPDATE feature_requests SET status = $1 WHERE id = $2', [status, req.params.id]));
     res.json({ ok: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
 });

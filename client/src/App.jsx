@@ -26,7 +26,148 @@ export default function App() {
   useEffect(() => { api('/me').then(u => { if (u?.id) setUser(u); }).finally(() => setLoading(false)); }, []);
   if (loading) return <div className="ld"><div className="spin"/>Loading...</div>;
   if (!user) return <Auth onLogin={setUser}/>;
+  if (user.is_admin) return <AdminDashboard user={user} setUser={setUser}/>;
   return <Main user={user} setUser={setUser}/>;
+}
+
+// ===================== ADMIN DASHBOARD =====================
+function AdminDashboard({ user, setUser }) {
+  const [tab, setTab] = useState('users');
+  const [users, setUsers] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [msg, setMsg] = useState('');
+
+  async function loadUsers() {
+    const u = await api('/admin/users');
+    if (Array.isArray(u)) setUsers(u);
+  }
+  async function loadRequests() {
+    const r = await api('/admin/feature-requests');
+    if (Array.isArray(r)) setRequests(r);
+  }
+
+  useEffect(() => { loadUsers(); loadRequests(); }, []);
+
+  async function approve(id) {
+    await api('/admin/users/' + id + '/approve', 'POST');
+    setMsg('✅ Approved!');
+    loadUsers();
+    setTimeout(() => setMsg(''), 2000);
+  }
+  async function deny(id) {
+    await api('/admin/users/' + id + '/deny', 'POST');
+    setMsg('❌ Denied');
+    loadUsers();
+    setTimeout(() => setMsg(''), 2000);
+  }
+  async function del(id, username) {
+    if (!confirm(`Permanently delete user "${username}" and all their data?`)) return;
+    await api('/admin/users/' + id, 'DELETE');
+    loadUsers();
+  }
+  async function setReqStatus(id, status) {
+    await api('/admin/feature-requests/' + id, 'PUT', { status });
+    loadRequests();
+  }
+  async function logout() { await api('/logout', 'POST'); setUser(null); }
+
+  const pending = users.filter(u => u.status === 'pending');
+  const approved = users.filter(u => u.status === 'approved' && !u.is_admin);
+  const denied = users.filter(u => u.status === 'denied');
+
+  return (
+    <div className="admin-app">
+      <header className="admin-header">
+        <h1>🛡️ AgentVerse Admin</h1>
+        <div>
+          <span className="admin-hi">Hi, {user.display_name}</span>
+          <button className="hb" onClick={logout}>Logout</button>
+        </div>
+      </header>
+      <nav className="admin-nav">
+        <button className={tab==='users'?'on':''} onClick={()=>setTab('users')}>👥 Users ({users.length})</button>
+        <button className={tab==='pending'?'on':''} onClick={()=>setTab('pending')}>⏳ Pending ({pending.length})</button>
+        <button className={tab==='requests'?'on':''} onClick={()=>setTab('requests')}>💡 Feature Requests ({requests.filter(r=>r.status==='open').length})</button>
+      </nav>
+      {msg && <div className="admin-msg">{msg}</div>}
+      <main className="admin-main">
+        {tab === 'users' && (
+          <div>
+            <h2>All Users</h2>
+            <div className="admin-stats">
+              <div className="stat-box"><div className="stat-num">{approved.length}</div><div className="stat-lbl">Approved</div></div>
+              <div className="stat-box"><div className="stat-num">{pending.length}</div><div className="stat-lbl">Pending</div></div>
+              <div className="stat-box"><div className="stat-num">{denied.length}</div><div className="stat-lbl">Denied</div></div>
+            </div>
+            <table className="admin-table">
+              <thead><tr><th>Status</th><th>Username</th><th>Name</th><th>Age</th><th>Level</th><th>XP</th><th>🪙</th><th>Actions</th></tr></thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.id} className={`row-${u.status}`}>
+                    <td><span className={`status-pill status-${u.status}`}>{u.status}</span>{u.is_admin && <span className="admin-pill">admin</span>}</td>
+                    <td>{u.username}</td>
+                    <td>{u.display_name}</td>
+                    <td>{u.age}</td>
+                    <td>{u.level}</td>
+                    <td>{u.xp}</td>
+                    <td>{u.tokens}</td>
+                    <td>
+                      {u.status === 'pending' && <>
+                        <button className="admin-btn approve" onClick={()=>approve(u.id)}>Approve</button>
+                        <button className="admin-btn deny" onClick={()=>deny(u.id)}>Deny</button>
+                      </>}
+                      {u.status !== 'pending' && !u.is_admin && (
+                        <button className="admin-btn del" onClick={()=>del(u.id, u.username)}>Delete</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {tab === 'pending' && (
+          <div>
+            <h2>Pending Approvals</h2>
+            {pending.length === 0 && <p className="admin-empty">No one is waiting for approval right now.</p>}
+            {pending.map(u => (
+              <div key={u.id} className="pending-card">
+                <div>
+                  <h3>{u.display_name} <span className="pending-username">(@{u.username})</span></h3>
+                  <p>Age {u.age} · Signed up {new Date(u.created_at).toLocaleString()}</p>
+                </div>
+                <div className="pending-actions">
+                  <button className="admin-btn approve big" onClick={()=>approve(u.id)}>✅ Approve</button>
+                  <button className="admin-btn deny big" onClick={()=>deny(u.id)}>❌ Deny</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {tab === 'requests' && (
+          <div>
+            <h2>Feature Requests from Users</h2>
+            {requests.length === 0 && <p className="admin-empty">No feature requests yet.</p>}
+            {requests.map(r => (
+              <div key={r.id} className={`req-card req-${r.status}`}>
+                <div className="req-meta">
+                  <strong>{r.display_name}</strong> <span className="req-user">@{r.username}</span>
+                  <span className="req-time">{new Date(r.created_at).toLocaleString()}</span>
+                </div>
+                <p className="req-body">{r.body}</p>
+                <div className="req-actions">
+                  <span className={`req-status req-s-${r.status}`}>{r.status}</span>
+                  <button className="admin-btn" onClick={()=>setReqStatus(r.id, 'seen')}>Mark Seen</button>
+                  <button className="admin-btn approve" onClick={()=>setReqStatus(r.id, 'done')}>Done</button>
+                  <button className="admin-btn deny" onClick={()=>setReqStatus(r.id, 'rejected')}>Reject</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
 }
 
 // ===================== AUTH =====================
@@ -47,8 +188,7 @@ function Auth({ onLogin }) {
       const r = await api('/register','POST',{ username:f.username, password:f.password, displayName:f.displayName, age:+f.age, theme:f.theme });
       setBusy(false);
       if (r.error) return setErr(r.error);
-      await api('/logout','POST');
-      setOk('Account created! Now log in!');
+      setOk('🎉 Account created! An admin needs to approve you before you can log in. Check back soon!');
       setMode('login');
       set('password','');
     } else {
@@ -207,10 +347,12 @@ function Main({ user, setUser }) {
         <button className={view==='shop'?'on':''} onClick={()=>setView('shop')}>🛒 Shop</button>
         <button className={view==='studio'?'on':''} onClick={()=>setView('studio')}>🎮 Game Studio</button>
         <button className={view==='progress'?'on':''} onClick={()=>setView('progress')}>📊 Progress</button>
+        <button className={view==='feature'?'on':''} onClick={()=>setView('feature')}>💡 Ideas</button>
       </nav>
       <main>
         {view==='theme' && <ThemePicker t={effectiveT} user={user} refreshUser={refresh} reloadInventory={loadInventory} back={()=>setView('home')}/>}
         {view==='progress' && <Progress t={effectiveT}/>}
+        {view==='feature' && <FeatureRequest t={effectiveT}/>}
         {view==='shop' && <Shop t={effectiveT} user={user} refreshUser={refresh} reloadInventory={loadInventory} hasBonusGame={hasBonusGame}/>}
         {view==='studio' && <GameStudio t={effectiveT} back={()=>setView('home')}/>}
         {view==='home' && !world && <WorldMap t={effectiveT} pick={enterWorld} openStudio={()=>setView('studio')}/>}
@@ -1685,6 +1827,49 @@ function MemoryMatchGame({ t, onExit }) {
           <button className="btn-go" onClick={onExit}>Done</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ===================== FEATURE REQUEST FORM =====================
+function FeatureRequest({ t }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [ok, setOk] = useState('');
+  const [err, setErr] = useState('');
+
+  async function submit() {
+    setErr(''); setOk('');
+    if (!text.trim() || text.trim().length < 5) { setErr('Write at least 5 characters'); return; }
+    setBusy(true);
+    const r = await api('/feature-requests', 'POST', { body: text });
+    setBusy(false);
+    if (r.error) { setErr(r.error); return; }
+    setOk('🎉 Thanks! The admin will see your idea.');
+    setText('');
+  }
+
+  return (
+    <div className="content">
+      <h2>💡 Got an Idea?</h2>
+      <p className="adesc">Tell the admin what you'd like to see next! Maybe a new game, a new world, or a cool feature?</p>
+      <div className="feature-form">
+        <textarea
+          placeholder="I wish AgentVerse had..."
+          value={text}
+          onChange={e => setText(e.target.value)}
+          maxLength={500}
+          rows={5}
+        />
+        <div className="feature-actions">
+          <span className="char-count">{text.length}/500</span>
+          <button className="btn-go" disabled={busy || !text.trim()} onClick={submit}>
+            {busy ? 'Sending...' : 'Send Idea ✨'}
+          </button>
+        </div>
+        {err && <div className="msg bad">{err}</div>}
+        {ok && <div className="msg good">{ok}</div>}
+      </div>
     </div>
   );
 }
