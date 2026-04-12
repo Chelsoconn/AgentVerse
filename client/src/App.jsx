@@ -1396,14 +1396,16 @@ function CodeChallenge({ a, t, showXp, boom, next }) {
 }
 
 // ===================== PROMPT PRACTICE =====================
-function PromptPracticeGame({ a, t, showXp, boom, next }) {
+function PromptPracticeGame({ a, t, showXp, showTokens, refreshUser, boom, next }) {
   const [idx, setIdx] = useState(0);
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [err, setErr] = useState('');
   const [passed, setPassed] = useState(a.tasks.map(() => false));
+  const [scored, setScored] = useState(false);
   const task = a.tasks[idx];
+  const anyPassed = passed.some(Boolean);
   const allDone = passed.every(Boolean);
 
   async function submit() {
@@ -1416,8 +1418,10 @@ function PromptPracticeGame({ a, t, showXp, boom, next }) {
     if (r.score >= 7) {
       const np = [...passed]; np[idx] = true; setPassed(np);
       showXp(r.score * 5);
-      if (np.every(Boolean)) {
-        postScore(a.id, a.tasks.length, a.tasks.length, showTokens, refreshUser);
+      // Mark the activity as complete the FIRST time any prompt is graded ≥7
+      if (!scored) {
+        setScored(true);
+        postScore(a.id, np.filter(Boolean).length, a.tasks.length, showTokens, refreshUser);
         boom();
       }
     }
@@ -1485,10 +1489,21 @@ function PromptPracticeGame({ a, t, showXp, boom, next }) {
             <div className="pp-fb-row"><strong>👍 Great:</strong> {feedback.good}</div>
             <div className="pp-fb-row"><strong>💡 Tip:</strong> {feedback.tip}</div>
           </div>
-          {feedback.score >= 7 && idx < a.tasks.length - 1 && (
-            <button className="btn-go" onClick={goNext}>Next Task →</button>
+          {feedback.score >= 7 && (
+            <div className="pp-pass-actions">
+              {idx < a.tasks.length - 1 && (
+                <button className="nbtn" onClick={goNext}>Try Another Task →</button>
+              )}
+              <button className="btn-go" onClick={next}>Continue →</button>
+            </div>
           )}
-          {allDone && <div className="pp-final">🏆 You finished all the practice prompts!<button className="btn-go" onClick={next}>Continue →</button></div>}
+        </div>
+      )}
+
+      {anyPassed && !feedback && (
+        <div className="pp-already-passed">
+          ✅ You already passed a prompt!
+          <button className="btn-go" onClick={next}>Continue →</button>
         </div>
       )}
     </div>

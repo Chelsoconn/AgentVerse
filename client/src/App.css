@@ -265,6 +265,10 @@ main{padding:16px;max-width:800px;margin:0 auto}
 .pp-fb-row{margin-bottom:4px}
 .pp-final{margin-top:14px;text-align:center;font-size:1.1rem;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:10px}
 .pp-feedback .btn-go{margin-top:10px;width:auto;padding:10px 22px}
+.pp-pass-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap}
+.pp-pass-actions .btn-go,.pp-pass-actions .nbtn{margin:0}
+.pp-already-passed{display:flex;justify-content:space-between;align-items:center;gap:14px;background:rgba(76,175,80,.12);border:2px solid #4caf50;border-radius:12px;padding:14px 18px;margin-top:12px;font-weight:600}
+.pp-already-passed .btn-go{width:auto;padding:10px 20px;margin:0}
 
 /* JOURNEY MAP */
 .journey{max-width:900px}
