@@ -370,6 +370,289 @@ async function init() {
     await pool.query("ALTER TABLE user_xp ADD COLUMN IF NOT EXISTS game_credits INTEGER NOT NULL DEFAULT 1");
   } catch (e) { console.warn('Migrations:', e.message); }
 
+  // ---------- MIGRATION: ADD COMPUTER BASICS UNIVERSE ----------
+  try {
+    const hasCS = (await pool.query("SELECT id FROM universes WHERE name = 'Computer Basics'")).rows[0];
+    if (!hasCS) {
+      console.log('Adding Computer Basics universe...');
+      await pool.query("SELECT set_config('app.is_admin', 'true', false)");
+      // Shift existing universes to make room at position 2
+      await pool.query("UPDATE universes SET sort_order = sort_order + 1 WHERE sort_order >= 2");
+      const csUni = (await pool.query(
+        "INSERT INTO universes (name, description, icon, sort_order) VALUES ('Computer Basics', 'Learn how computers work from the ground up!', '🖥️', 2) RETURNING id"
+      )).rows[0].id;
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const mkCat = async (n,d,i,s) => (await client.query('INSERT INTO categories (name,description,icon,universe_id,sort_order) VALUES ($1,$2,$3,$4,$5) RETURNING id', [n,d,i,csUni,s])).rows[0].id;
+        const mkLes = async (c,t,co,s) => (await client.query('INSERT INTO lessons (category_id,title,content,sort_order) VALUES ($1,$2,$3,$4) RETURNING id', [c,t,co,s])).rows[0].id;
+        const mkQz = async (l,q,s) => (await client.query('INSERT INTO quizzes (lesson_id,question,sort_order) VALUES ($1,$2,$3) RETURNING id', [l,q,s])).rows[0].id;
+        const mkCh = async (q,t,c,s) => client.query('INSERT INTO quiz_choices (quiz_id,choice_text,is_correct,sort_order) VALUES ($1,$2,$3,$4)', [q,t,!!c,s]);
+        const mkAct = async (l,t,ti,d,s) => (await client.query('INSERT INTO activities (lesson_id,activity_type,title,description,sort_order) VALUES ($1,$2,$3,$4,$5) RETURNING id', [l,t,ti,d,s])).rows[0].id;
+        const mkTF = async (a,stmt,istrue,expl,s) => client.query('INSERT INTO activity_truefalse_items (activity_id,statement,is_true,explanation,sort_order) VALUES ($1,$2,$3,$4,$5)', [a,stmt,!!istrue,expl,s]);
+        const mkMatch = async (a,term,def,s) => client.query('INSERT INTO activity_match_pairs (activity_id,term,definition,sort_order) VALUES ($1,$2,$3,$4)', [a,term,def,s]);
+        const mkSort = async (a,content,pos) => client.query('INSERT INTO activity_sort_items (activity_id,content,correct_position) VALUES ($1,$2,$3)', [a,content,pos]);
+        const mkMini = async (l,kind,ti,d,s) => client.query("INSERT INTO activities (lesson_id,activity_type,title,description,game_kind,sort_order) VALUES ($1,'minigame',$2,$3,$4,$5)", [l,ti,d,kind,s]);
+        let a, l, q;
+
+        // ===== WORLD 1: WHAT IS A COMPUTER? =====
+        const w1 = await mkCat('What is a Computer?', 'Discover what computers are and how they work!', '🖥️', 1);
+
+        l = await mkLes(w1, 'Computers Are Everywhere', 'A computer is any machine that follows instructions to do a job. They come in all shapes and sizes!\n\nPhones, tablets, game consoles, smart TVs — all computers! Even some refrigerators have tiny computers inside.', 1);
+        a = await mkAct(l, 'match', 'Computer or Not?', 'Which of these are computers?', 1);
+        await mkMatch(a,'📱 Smartphone','Yes, it\'s a computer!',1);
+        await mkMatch(a,'🪑 Wooden Chair','Not a computer',2);
+        await mkMatch(a,'🎮 Nintendo Switch','Yes, it\'s a computer!',3);
+        await mkMatch(a,'📕 Paper Book','Not a computer',4);
+        await mkMatch(a,'🚗 Tesla Car','Yes, it has a computer!',5);
+        q = await mkQz(l, 'Which is NOT a computer?', 1);
+        await mkCh(q,'A smartphone',0,1);
+        await mkCh(q,'A wooden spoon',1,2);
+        await mkCh(q,'A game console',0,3);
+
+        l = await mkLes(w1, 'Parts of a Computer', 'Every computer has key parts:\n\n🧠 CPU — the brain, does all the thinking\n💾 Memory (RAM) — remembers things while working\n💿 Storage — saves stuff permanently\n🖥️ Screen — shows you what\'s happening\n⌨️ Keyboard/Mouse — how YOU talk to it', 2);
+        a = await mkAct(l, 'match', 'Match the Part!', 'What does each part do?', 1);
+        await mkMatch(a,'CPU','The brain — does the thinking',1);
+        await mkMatch(a,'RAM','Short-term memory',2);
+        await mkMatch(a,'Hard Drive','Saves files permanently',3);
+        await mkMatch(a,'Screen','Shows you what\'s happening',4);
+        await mkMatch(a,'Keyboard','How you type to the computer',5);
+        q = await mkQz(l, 'What is the CPU?', 1);
+        await mkCh(q,'The screen',0,1);
+        await mkCh(q,'The brain of the computer',1,2);
+        await mkCh(q,'The power button',0,3);
+
+        l = await mkLes(w1, 'Input and Output', 'Input = what goes INTO the computer (typing, clicking, talking)\nOutput = what comes OUT (screen, sound, printing)\n\nYou give input → the computer processes it → you get output!', 3);
+        a = await mkAct(l, 'match', 'Input or Output?', 'Sort each one!', 1);
+        await mkMatch(a,'⌨️ Typing on keyboard','Input',1);
+        await mkMatch(a,'🖥️ Text on screen','Output',2);
+        await mkMatch(a,'🖱️ Clicking a mouse','Input',3);
+        await mkMatch(a,'🔊 Sound from speakers','Output',4);
+        await mkMatch(a,'🎤 Speaking into mic','Input',5);
+        q = await mkQz(l, 'Typing on a keyboard is...', 1);
+        await mkCh(q,'Output',0,1);
+        await mkCh(q,'Input',1,2);
+        await mkCh(q,'Neither',0,3);
+
+        await mkMini(w1,'catch_ai','🎁 Bonus: Catch the Computer!','Tap things that are computers!',4);
+
+        // ===== WORLD 2: HOW COMPUTERS THINK =====
+        const w2 = await mkCat('How Computers Think', 'Learn the secret language of computers!', '🧠', 2);
+
+        l = await mkLes(w2, 'Binary: Zeros and Ones', 'Computers only understand TWO things: 0 and 1. That\'s it!\n\n0 = off, 1 = on. Like a light switch.\n\nEvery picture, song, game, and message is secretly made of millions of 0s and 1s!', 1);
+        a = await mkAct(l, 'truefalse', 'Binary Facts!', 'Test your binary knowledge!', 1);
+        await mkTF(a,'Computers use 0s and 1s',1,'Yes! That\'s called binary.',1);
+        await mkTF(a,'Computers understand English directly',0,'Nope! Everything gets converted to binary first.',2);
+        await mkTF(a,'A photo is made of 0s and 1s',1,'Yes! Every digital file is binary.',3);
+        await mkTF(a,'Binary has 10 different digits',0,'Only 2: zero and one!',4);
+        await mkTF(a,'0 means off and 1 means on',1,'Correct! Like a light switch.',5);
+        q = await mkQz(l, 'How many digits does binary use?', 1);
+        await mkCh(q,'10',0,1);
+        await mkCh(q,'2',1,2);
+        await mkCh(q,'26',0,3);
+
+        l = await mkLes(w2, 'Following Instructions Exactly', 'Computers follow instructions EXACTLY. No guessing!\n\nIf you say "jump 3 times" a computer jumps EXACTLY 3 times. Not 2, not 4.\n\nThis is why the ORDER of instructions matters — just like steps in a recipe.', 2);
+        a = await mkAct(l, 'sort', 'Get Dressed (Computer Style)!', 'A computer puts on clothes step by step. What order?', 1);
+        await mkSort(a,'Put on underwear',1);
+        await mkSort(a,'Put on pants',2);
+        await mkSort(a,'Put on socks',3);
+        await mkSort(a,'Put on shoes',4);
+        await mkSort(a,'Put on jacket',5);
+        q = await mkQz(l, 'Why does order matter for computers?', 1);
+        await mkCh(q,'It doesn\'t matter',0,1);
+        await mkCh(q,'They follow steps exactly in order',1,2);
+        await mkCh(q,'They\'re lazy',0,3);
+
+        l = await mkLes(w2, 'Processing: Think Fast!', 'The CPU does billions of calculations every second!\n\nIt follows a cycle:\n1. FETCH the instruction\n2. DECODE what it means\n3. EXECUTE (do it!)\n4. Repeat billions of times per second', 3);
+        a = await mkAct(l, 'sort', 'CPU Cycle!', 'Put the CPU steps in order!', 1);
+        await mkSort(a,'Fetch the instruction',1);
+        await mkSort(a,'Decode what it means',2);
+        await mkSort(a,'Execute (do it!)',3);
+        await mkSort(a,'Store the result',4);
+        q = await mkQz(l, 'How many calculations can a CPU do per second?', 1);
+        await mkCh(q,'About 10',0,1);
+        await mkCh(q,'Billions!',1,2);
+        await mkCh(q,'One',0,3);
+
+        await mkMini(w2,'bug_squash','🎁 Bonus: Bug Squash!','Squash computer bugs!',4);
+
+        // ===== WORLD 3: THE INTERNET =====
+        const w3 = await mkCat('The Internet', 'How computers talk to each other around the world!', '🌐', 3);
+
+        l = await mkLes(w3, 'What is the Internet?', 'The internet is a giant network of computers all connected together!\n\nLike a web of roads connecting every city. Data travels along these "roads" in tiny packets — like digital mail.', 1);
+        a = await mkAct(l, 'truefalse', 'Internet Facts!', 'How well do you know the internet?', 1);
+        await mkTF(a,'The internet connects computers worldwide',1,'Yes! Billions of them.',1);
+        await mkTF(a,'The internet is stored in one big computer',0,'It\'s spread across millions of computers!',2);
+        await mkTF(a,'Data travels in small packets',1,'Correct! Like digital mail.',3);
+        await mkTF(a,'You need a wire to use the internet',0,'WiFi lets you connect wirelessly!',4);
+        await mkTF(a,'The internet and the web are the same thing',0,'The web is just ONE part of the internet.',5);
+        q = await mkQz(l, 'What is the internet?', 1);
+        await mkCh(q,'One big computer',0,1);
+        await mkCh(q,'A network of connected computers',1,2);
+        await mkCh(q,'A type of phone',0,3);
+
+        l = await mkLes(w3, 'Websites and Browsers', 'A website is a page (or collection of pages) on the internet.\n\nA browser (like Chrome, Safari, Firefox) is the app you use to VISIT websites.\n\nWhen you type a URL, your browser asks a faraway computer to send you the page!', 2);
+        a = await mkAct(l, 'match', 'Web Vocab!', 'Match each term!', 1);
+        await mkMatch(a,'Browser','App you use to visit websites',1);
+        await mkMatch(a,'URL','The address of a website',2);
+        await mkMatch(a,'Server','A computer that stores websites',3);
+        await mkMatch(a,'Download','Getting a file FROM the internet',4);
+        await mkMatch(a,'Upload','Sending a file TO the internet',5);
+        q = await mkQz(l, 'What is a browser?', 1);
+        await mkCh(q,'A type of computer',0,1);
+        await mkCh(q,'An app to visit websites',1,2);
+        await mkCh(q,'A search engine',0,3);
+
+        l = await mkLes(w3, 'Staying Safe Online', 'The internet is awesome but you need to stay safe!\n\n🔒 Never share passwords\n🚫 Don\'t share personal info (address, phone, school)\n🤔 If something feels weird, tell an adult\n✅ Use strong passwords (mix letters, numbers, symbols)', 3);
+        a = await mkAct(l, 'truefalse', 'Safety Check!', 'Safe or not safe?', 1);
+        await mkTF(a,'Sharing your password with a friend is okay',0,'Never share passwords — even with friends!',1);
+        await mkTF(a,'You should tell an adult if something online feels wrong',1,'Yes! Always tell a trusted adult.',2);
+        await mkTF(a,'Using the same password for everything is fine',0,'Use different passwords for different sites!',3);
+        await mkTF(a,'It\'s okay to share your home address online',0,'Never share personal info online!',4);
+        await mkTF(a,'Strong passwords mix letters, numbers, and symbols',1,'Correct! Like "Cr0c$Rul3!"',5);
+        q = await mkQz(l, 'What should you do if something online feels wrong?', 1);
+        await mkCh(q,'Ignore it',0,1);
+        await mkCh(q,'Tell a trusted adult',1,2);
+        await mkCh(q,'Share it with friends',0,3);
+
+        await mkMini(w3,'train_ai','🎁 Bonus: Data Sorter!','Sort things into the right groups!',4);
+
+        // ===== WORLD 4: ALGORITHMS =====
+        const w4 = await mkCat('Algorithms', 'Step-by-step instructions that solve problems!', '📝', 4);
+
+        l = await mkLes(w4, 'What is an Algorithm?', 'An algorithm is just a set of step-by-step instructions to solve a problem.\n\nA recipe is an algorithm! A morning routine is an algorithm!\n\nComputers use algorithms for EVERYTHING — searching, sorting, playing games.', 1);
+        a = await mkAct(l, 'sort', 'Make a PB&J!', 'Put the sandwich-making algorithm in order!', 1);
+        await mkSort(a,'Get two slices of bread',1);
+        await mkSort(a,'Spread peanut butter on one',2);
+        await mkSort(a,'Spread jelly on the other',3);
+        await mkSort(a,'Press them together',4);
+        await mkSort(a,'Cut in half',5);
+        q = await mkQz(l, 'What is an algorithm?', 1);
+        await mkCh(q,'A type of computer',0,1);
+        await mkCh(q,'Step-by-step instructions',1,2);
+        await mkCh(q,'A math formula',0,3);
+
+        l = await mkLes(w4, 'Sorting Things', 'Sorting means putting things in order — smallest to biggest, A to Z, newest to oldest.\n\nComputers sort things ALL the time. Your playlist, your contacts, search results — all sorted by algorithms!', 2);
+        a = await mkAct(l, 'sort', 'Sort These Numbers!', 'Put them from smallest to biggest!', 1);
+        await mkSort(a,'3',1);
+        await mkSort(a,'7',2);
+        await mkSort(a,'15',3);
+        await mkSort(a,'42',4);
+        await mkSort(a,'99',5);
+        a = await mkAct(l, 'truefalse', 'Sorting Facts!', 'True or false?', 2);
+        await mkTF(a,'Computers can sort millions of items in seconds',1,'Yes! Sorting algorithms are super fast.',1);
+        await mkTF(a,'There is only one way to sort things',0,'There are many sorting algorithms!',2);
+        await mkTF(a,'Your music playlist uses sorting',1,'Correct! Songs are sorted by name, artist, etc.',3);
+        q = await mkQz(l, 'What does sorting mean?', 1);
+        await mkCh(q,'Deleting things',0,1);
+        await mkCh(q,'Putting things in order',1,2);
+        await mkCh(q,'Making things bigger',0,3);
+
+        l = await mkLes(w4, 'Searching: Finding Things', 'Searching = finding a specific thing in a collection.\n\nWhen you search on Google, an algorithm looks through BILLIONS of pages to find what you want — in less than a second!\n\nTwo ways to search:\n📖 Linear: check one by one\n📚 Binary: split in half each time (much faster!)', 3);
+        a = await mkAct(l, 'match', 'Search Match!', 'Match the search type!', 1);
+        await mkMatch(a,'Linear Search','Check items one by one',1);
+        await mkMatch(a,'Binary Search','Split in half each time',2);
+        await mkMatch(a,'Google Search','Searches billions of pages',3);
+        await mkMatch(a,'Ctrl+F','Finds text in a document',4);
+        q = await mkQz(l, 'Which search is faster for sorted data?', 1);
+        await mkCh(q,'Linear (one by one)',0,1);
+        await mkCh(q,'Binary (split in half)',1,2);
+        await mkCh(q,'Random',0,3);
+
+        await mkMini(w4,'pick_tool','🎁 Bonus: Pick the Algorithm!','Choose the right approach!',4);
+
+        // ===== WORLD 5: DATA & FILES =====
+        const w5 = await mkCat('Data & Files', 'Everything on a computer is data!', '📊', 5);
+
+        l = await mkLes(w5, 'What is Data?', 'Data is just information! Numbers, words, pictures, sounds — all data.\n\nComputers store data as files. A photo is a file. A song is a file. Even this lesson is data!', 1);
+        a = await mkAct(l, 'match', 'Types of Data!', 'Match the data type!', 1);
+        await mkMatch(a,'📸 Photo','Image data',1);
+        await mkMatch(a,'🎵 Song','Audio data',2);
+        await mkMatch(a,'📝 Essay','Text data',3);
+        await mkMatch(a,'🎬 Movie','Video data',4);
+        await mkMatch(a,'📊 Spreadsheet','Number data',5);
+        q = await mkQz(l, 'What is data?', 1);
+        await mkCh(q,'Only numbers',0,1);
+        await mkCh(q,'Any kind of information',1,2);
+        await mkCh(q,'Only text',0,3);
+
+        l = await mkLes(w5, 'Files and Folders', 'Files are like papers — each one holds information.\nFolders organize your files — like a filing cabinet!\n\nGood organization = finding things fast.\nHomework/Math/worksheet1.pdf is much better than putting everything on the desktop!', 2);
+        a = await mkAct(l, 'sort', 'Organize It!', 'Put these file actions in the right order!', 1);
+        await mkSort(a,'Create a new folder',1);
+        await mkSort(a,'Give it a clear name',2);
+        await mkSort(a,'Move related files into it',3);
+        await mkSort(a,'Save your work',4);
+        q = await mkQz(l, 'Why use folders?', 1);
+        await mkCh(q,'To make files bigger',0,1);
+        await mkCh(q,'To organize and find things easily',1,2);
+        await mkCh(q,'Folders aren\'t useful',0,3);
+
+        l = await mkLes(w5, 'Bits, Bytes, and Beyond', 'The smallest piece of data = 1 bit (a single 0 or 1).\n8 bits = 1 byte (enough for one letter!)\n\n1,000 bytes = 1 kilobyte (KB) — a short email\n1,000 KB = 1 megabyte (MB) — a photo\n1,000 MB = 1 gigabyte (GB) — a movie\n1,000 GB = 1 terabyte (TB) — a whole library!', 3);
+        a = await mkAct(l, 'sort', 'Smallest to Biggest!', 'Put these data sizes in order!', 1);
+        await mkSort(a,'Bit (1 or 0)',1);
+        await mkSort(a,'Byte (one letter)',2);
+        await mkSort(a,'Kilobyte (short email)',3);
+        await mkSort(a,'Megabyte (a photo)',4);
+        await mkSort(a,'Gigabyte (a movie)',5);
+        q = await mkQz(l, 'How many bits make a byte?', 1);
+        await mkCh(q,'2',0,1);
+        await mkCh(q,'8',1,2);
+        await mkCh(q,'100',0,3);
+
+        await mkMini(w5,'train_ai','🎁 Bonus: Data Detective!','Sort the data into categories!',4);
+
+        // ===== WORLD 6: PROBLEM SOLVING =====
+        const w6 = await mkCat('Problem Solving', 'Think like a computer scientist!', '🧩', 6);
+
+        l = await mkLes(w6, 'Break It Down', 'Big problems are scary. Small problems are easy!\n\nDecomposition = breaking a big problem into small pieces.\n\n"Build a game" is hard. But:\n1. Draw the character ✅\n2. Make it move ✅\n3. Add a score ✅\nEach small step is doable!', 1);
+        a = await mkAct(l, 'sort', 'Plan a Birthday Party!', 'Break this big task into ordered steps!', 1);
+        await mkSort(a,'Pick a date',1);
+        await mkSort(a,'Make a guest list',2);
+        await mkSort(a,'Send invitations',3);
+        await mkSort(a,'Buy food and decorations',4);
+        await mkSort(a,'Set up and have fun!',5);
+        q = await mkQz(l, 'What is decomposition?', 1);
+        await mkCh(q,'Making things rot',0,1);
+        await mkCh(q,'Breaking big problems into small steps',1,2);
+        await mkCh(q,'Composing music',0,3);
+
+        l = await mkLes(w6, 'Finding Bugs', 'A bug = something that\'s wrong in a program or plan.\nDebugging = finding and fixing the bug!\n\nDebugging tips:\n🔍 Read the error message carefully\n🤔 What SHOULD happen vs what DID happen?\n🧪 Test one small thing at a time', 2);
+        a = await mkAct(l, 'truefalse', 'Debugging Facts!', 'True or false?', 1);
+        await mkTF(a,'A bug is an error in code',1,'Yes! Bugs make programs do unexpected things.',1);
+        await mkTF(a,'The best programmers never make bugs',0,'Everyone makes bugs! Fixing them is the skill.',2);
+        await mkTF(a,'Reading error messages helps find bugs',1,'Correct! Error messages are clues.',3);
+        await mkTF(a,'If code doesn\'t work, you should give up',0,'Never! Debug step by step.',4);
+        await mkTF(a,'Testing one thing at a time helps',1,'Yes! Isolate the problem.',5);
+        q = await mkQz(l, 'What is debugging?', 1);
+        await mkCh(q,'Adding bugs',0,1);
+        await mkCh(q,'Finding and fixing errors',1,2);
+        await mkCh(q,'Deleting everything',0,3);
+
+        l = await mkLes(w6, 'Patterns Everywhere', 'A pattern = something that repeats in a predictable way.\n\nComputer scientists LOVE patterns because:\n🔁 Patterns let you write less code (use loops!)\n🔮 Patterns let you predict what comes next\n🧠 Recognizing patterns = thinking smart', 3);
+        a = await mkAct(l, 'match', 'Spot the Pattern!', 'Match each pattern to its type!', 1);
+        await mkMatch(a,'1, 2, 3, 4, 5...','Counting up by 1',1);
+        await mkMatch(a,'2, 4, 6, 8...','Counting up by 2',2);
+        await mkMatch(a,'Mon, Tue, Wed...','Days of the week',3);
+        await mkMatch(a,'🔴🔵🔴🔵...','Alternating colors',4);
+        q = await mkQz(l, 'Why are patterns useful in coding?', 1);
+        await mkCh(q,'They look pretty',0,1);
+        await mkCh(q,'They let you write less code and predict things',1,2);
+        await mkCh(q,'They aren\'t useful',0,3);
+
+        await mkMini(w6,'bug_squash','🎁 Bonus: Bug Hunt!','Find and squash all the bugs!',4);
+
+        await client.query('COMMIT');
+        console.log('✓ Created Computer Basics universe with 6 worlds');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        console.warn('CS101 seed failed:', e.message);
+      } finally {
+        client.release();
+      }
+    }
+  } catch (e) { console.warn('CS101 check:', e.message); }
+
   // ---------- MIGRATION: RESTRUCTURE PYTHON INTO DEEP WORLDS ----------
   try {
     const oldPython = (await pool.query("SELECT id FROM categories WHERE name = 'Python Coding'")).rows[0];
