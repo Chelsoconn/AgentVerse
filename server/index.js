@@ -430,7 +430,7 @@ app.post('/api/prompt-practice/grade', auth, async (req, res) => {
     }
 
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-6',
+      model: 'claude-sonnet-4-6',
       max_tokens: 300,
       system: PROMPT_GRADER_SYSTEM,
       messages: [{ role: 'user', content: `TASK: ${task}\nPROMPT: ${userPrompt}` }],
@@ -688,7 +688,7 @@ app.post('/api/game-studio/feedback', auth, async (req, res) => {
     if (!safety.ok) return res.status(400).json({ error: "Oh no! 🙈 That's not something I can help with. Try a different game idea!" });
 
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-6',
+      model: 'claude-sonnet-4-6',
       max_tokens: 250,
       system: GAME_FEEDBACK_SYSTEM,
       messages: [{ role: 'user', content: `PROMPT: ${prompt}` }],
@@ -740,7 +740,7 @@ app.post('/api/game-studio/iterate', auth, async (req, res) => {
     messages.push({ role: 'user', content: prompt });
 
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-6',
+      model: 'claude-sonnet-4-6',
       max_tokens: 16000,
       system: GAME_SYSTEM_PROMPT,
       messages,
@@ -948,7 +948,7 @@ app.post('/api/shop/buy', auth, async (req, res) => {
       purchaseName = prompt.trim().slice(0, 50);
       try {
         const response = await anthropic.messages.create({
-          model: 'claude-opus-4-6',
+          model: 'claude-sonnet-4-6',
           max_tokens: 400,
           system: BG_SYSTEM_PROMPT,
           messages: [{ role: 'user', content: prompt }],
