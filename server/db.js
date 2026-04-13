@@ -398,7 +398,7 @@ async function init() {
           await pool.query("DELETE FROM activity_sort_items WHERE activity_id = $1", [act.id]);
           await pool.query("DELETE FROM activity_truefalse_items WHERE activity_id = $1", [act.id]);
           await pool.query("DELETE FROM activity_blanks WHERE activity_id = $1", [act.id]);
-          await pool.query("DELETE FROM activity_blank_options WHERE activity_id IN (SELECT id FROM activity_blanks WHERE activity_id = $1)", [act.id]);
+          await pool.query("DELETE FROM activity_blank_options WHERE blank_id IN (SELECT id FROM activity_blanks WHERE activity_id = $1)", [act.id]);
         }
         await pool.query("DELETE FROM activities WHERE lesson_id = $1", [l.id]);
         await pool.query("DELETE FROM quiz_choices WHERE quiz_id IN (SELECT id FROM quizzes WHERE lesson_id = $1)", [l.id]);
