@@ -588,7 +588,7 @@ async function init() {
 
   // Seed shop items (idempotent — adds new items, updates prices)
   const items = [
-    ['custom_bg',     'Custom AI Background', 'Describe a background and Claude paints it just for you!', '🎨', 40, 'background'],
+    ['custom_bg',     'Custom Background', 'Describe a background and Claude paints it just for you!', '🎨', 40, 'background'],
     ['bonus_game',    'Memory Match Game',    'Unlock a brand new memory match mini-game forever!',       '🧠', 10, 'bonus_game'],
     ['extra_game',    'Extra Game Pass',      'Unlock the power to make ANOTHER game in Game Studio!',    '🎮', 40, 'game_pass'],
     ['crown',         'Royal Crown',          'A shiny crown next to your name in the header.',           '👑',  5, 'cosmetic'],

@@ -263,6 +263,14 @@ app.get('/api/categories/:id/lessons', auth, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
 });
 
+app.get('/api/lessons/:id', auth, async (req, res) => {
+  try {
+    const lesson = await pq1('SELECT * FROM lessons WHERE id = $1', [req.params.id]);
+    if (!lesson) return res.status(404).json({ error: 'Not found' });
+    res.json(lesson);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
 // ================== ACTIVITIES ==================
 app.get('/api/lessons/:id/activities', auth, async (req, res) => {
   try {

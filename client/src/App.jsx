@@ -242,6 +242,94 @@ function Main({ user, setUser }) {
   }, []);
   useEffect(() => { loadInventory(); }, [loadInventory]);
 
+  // ========= HASH-BASED URL ROUTING =========
+  const skipHashPush = useRef(false);
+
+  // Build hash from current state
+  function stateToHash() {
+    if (view === 'shop') return '#/shop';
+    if (view === 'progress') return '#/progress';
+    if (view === 'studio') return '#/studio';
+    if (view === 'theme') return '#/theme';
+    if (view === 'feature') return '#/ideas';
+    if (view === 'home') {
+      if (lesson) return '#/universe/' + (universe?.id || 0) + '/world/' + (world?.id || 0) + '/lesson/' + lesson.id;
+      if (world) return '#/universe/' + (universe?.id || 0) + '/world/' + world.id;
+      if (universe) return '#/universe/' + universe.id;
+      return '#/';
+    }
+    return '#/';
+  }
+
+  // Parse hash into state updates
+  function hashToState(hash) {
+    const h = (hash || '').replace('#', '');
+    if (h === '/' || h === '') return { view: 'home', universe: null, world: null, lesson: null };
+    if (h === '/shop') return { view: 'shop' };
+    if (h === '/progress') return { view: 'progress' };
+    if (h === '/studio') return { view: 'studio' };
+    if (h === '/theme') return { view: 'theme' };
+    if (h === '/ideas') return { view: 'feature' };
+
+    const uniMatch = h.match(/^\/universe\/(\d+)$/);
+    if (uniMatch) return { view: 'home', universe: { id: Number(uniMatch[1]) }, world: null, lesson: null };
+
+    const worldMatch = h.match(/^\/universe\/(\d+)\/world\/(\d+)$/);
+    if (worldMatch) return { view: 'home', universe: { id: Number(worldMatch[1]) }, world: { id: Number(worldMatch[2]) }, lesson: null };
+
+    const lessonMatch = h.match(/^\/universe\/(\d+)\/world\/(\d+)\/lesson\/(\d+)$/);
+    if (lessonMatch) {
+      return {
+        view: 'home',
+        universe: { id: Number(lessonMatch[1]) },
+        world: { id: Number(lessonMatch[2]) },
+        lesson: { id: Number(lessonMatch[3]), _fromUrl: true },
+      };
+    }
+    return { view: 'home', universe: null, world: null, lesson: null };
+  }
+
+  // Push hash on state change
+  useEffect(() => {
+    if (skipHashPush.current) { skipHashPush.current = false; return; }
+    const newHash = stateToHash();
+    if (window.location.hash !== newHash) {
+      window.history.pushState(null, '', newHash);
+    }
+  }, [view, universe?.id, world?.id, lesson?.id]);
+
+  // Listen for back/forward button
+  useEffect(() => {
+    function onPopState() {
+      skipHashPush.current = true;
+      const s = hashToState(window.location.hash);
+      setView(s.view || 'home');
+      if (s.view === 'home') {
+        setUniverse(s.universe || null);
+        setWorld(s.world || null);
+        setLesson(s.lesson || null);
+      }
+    }
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // On mount, restore state from hash
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash && hash !== '#/' && hash !== '#') {
+      skipHashPush.current = true;
+      const s = hashToState(hash);
+      setView(s.view || 'home');
+      if (s.view === 'home') {
+        setUniverse(s.universe || null);
+        setWorld(s.world || null);
+        // Don't restore lesson from URL — user should navigate to it
+        // (we don't have the full lesson object from just an ID)
+      }
+    }
+  }, []);
+
   const cosmetics = new Set((inventory.purchases || []).filter(p => p.kind === 'cosmetic').map(p => p.code));
   const hasBonusGame = (inventory.purchases || []).some(p => p.kind === 'bonus_game');
 
@@ -344,7 +432,7 @@ function Main({ user, setUser }) {
         </div>
       </header>
       <nav>
-        <button className={view==='home'?'on':''} onClick={()=>{setView('home');setUniverse(null);setWorld(null);setLesson(null);}}>🌌 Universes</button>
+        <button className={view==='home'?'on':''} onClick={()=>{setView('home');setUniverse(null);setWorld(null);setLesson(null);window.location.hash='/';}}>🌌 Universes</button>
         <button className={'nav-game-btn ' + (view==='studio'?'on':'')} onClick={()=>setView('studio')}>🎮 My Games</button>
         <button className={view==='shop'?'on':''} onClick={()=>setView('shop')}>🛒 Shop</button>
         <button className={view==='progress'?'on':''} onClick={()=>setView('progress')}>📊 Progress</button>
@@ -467,7 +555,7 @@ function WorldMap({ t, universe, pick, openStudio, back }) {
   return (
     <div className="content journey">
       <button className="back" onClick={back}>← All Universes</button>
-      <h2 className="journey-title">{universe.icon} {universe.name}</h2>
+      <h2 className="journey-title">{universe.icon || '🌌'} {universe.name || 'Adventure'}</h2>
       <p className="journey-sub">Complete all worlds + the Game Studio to unlock the next universe!</p>
       <div className="journey-path big-path" style={{background:t.pathBg}}>
         {Array.from({length:18}).map((_,i)=><span key={'d'+i} className="float-deco" style={{left:`${(i*7)%95}%`,top:`${(i*11)%100}%`,animationDelay:`${i*0.4}s`,fontSize:`${1.4+(i%3)*0.5}rem`}}>{t.deco[i%t.deco.length]}</span>)}
@@ -833,7 +921,8 @@ function Lessons({ catId, t, pick, back }) {
 }
 
 // ===================== LESSON VIEW =====================
-function LessonView({ lesson, t, back, showXp, showTokens, boom, refreshUser }) {
+function LessonView({ lesson: lessonProp, t, back, showXp, showTokens, boom, refreshUser }) {
+  const [lesson, setLesson] = useState(lessonProp);
   const [acts, setActs] = useState([]);
   const [quizzes, setQuizzes] = useState([]);
   const [step, setStep] = useState(0);
@@ -842,6 +931,10 @@ function LessonView({ lesson, t, back, showXp, showTokens, boom, refreshUser }) 
   const [allQAnswered, setAllQAnswered] = useState(false);
 
   useEffect(() => {
+    // If we came from a URL and don't have lesson content, fetch it
+    if (!lesson.content && lesson.id) {
+      api('/lessons/' + lesson.id).then(l => { if (l && !l.error) setLesson(l); });
+    }
     Promise.all([api('/lessons/'+lesson.id+'/activities'), api('/lessons/'+lesson.id+'/quizzes')]).then(([a,q])=>{
       if (Array.isArray(a)) setActs(a);
       if (Array.isArray(q)) setQuizzes(q);
