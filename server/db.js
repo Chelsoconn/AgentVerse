@@ -370,6 +370,229 @@ async function init() {
     await pool.query("ALTER TABLE user_xp ADD COLUMN IF NOT EXISTS game_credits INTEGER NOT NULL DEFAULT 1");
   } catch (e) { console.warn('Migrations:', e.message); }
 
+  // ---------- MIGRATION: RESTRUCTURE PYTHON INTO DEEP WORLDS ----------
+  try {
+    const oldPython = (await pool.query("SELECT id FROM categories WHERE name = 'Python Coding'")).rows[0];
+    if (oldPython) {
+      console.log('Restructuring Python into deep worlds...');
+      const uni2 = (await pool.query("SELECT id FROM universes WHERE sort_order = 2")).rows[0].id;
+      // Create Universe 3 for AI+Coding if it doesn't exist
+      let uni3 = (await pool.query("SELECT id FROM universes WHERE sort_order = 3")).rows[0];
+      if (!uni3) {
+        uni3 = (await pool.query(
+          "INSERT INTO universes (name, description, icon, sort_order) VALUES ('AI + Coding', 'Combine AI with your coding skills!', '🚀', 3) RETURNING id"
+        )).rows[0];
+      }
+      // Move AI + Coding category to Universe 3
+      await pool.query("UPDATE categories SET universe_id = $1 WHERE name = 'AI + Coding'", [uni3.id]);
+      // Rename Universe 2
+      await pool.query("UPDATE universes SET name = 'Python Basics', description = 'Master Python one step at a time!', icon = '🐍' WHERE id = $1", [uni2]);
+
+      // Delete old Python Coding category and all its content (cascades)
+      const oldLessons = (await pool.query("SELECT id FROM lessons WHERE category_id = $1", [oldPython.id])).rows;
+      for (const l of oldLessons) {
+        const oldActs = (await pool.query("SELECT id FROM activities WHERE lesson_id = $1", [l.id])).rows;
+        for (const act of oldActs) {
+          await pool.query("DELETE FROM activity_code_challenges WHERE activity_id = $1", [act.id]);
+          await pool.query("DELETE FROM activity_match_pairs WHERE activity_id = $1", [act.id]);
+          await pool.query("DELETE FROM activity_sort_items WHERE activity_id = $1", [act.id]);
+          await pool.query("DELETE FROM activity_truefalse_items WHERE activity_id = $1", [act.id]);
+          await pool.query("DELETE FROM activity_blanks WHERE activity_id = $1", [act.id]);
+          await pool.query("DELETE FROM activity_blank_options WHERE activity_id IN (SELECT id FROM activity_blanks WHERE activity_id = $1)", [act.id]);
+        }
+        await pool.query("DELETE FROM activities WHERE lesson_id = $1", [l.id]);
+        await pool.query("DELETE FROM quiz_choices WHERE quiz_id IN (SELECT id FROM quizzes WHERE lesson_id = $1)", [l.id]);
+        await pool.query("DELETE FROM quizzes WHERE lesson_id = $1", [l.id]);
+      }
+      await pool.query("DELETE FROM lessons WHERE category_id = $1", [oldPython.id]);
+      await pool.query("DELETE FROM categories WHERE id = $1", [oldPython.id]);
+
+      // Create 4 new Python worlds
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Helpers
+        const mkCat = async (n,d,i,s) => (await client.query('INSERT INTO categories (name,description,icon,universe_id,sort_order) VALUES ($1,$2,$3,$4,$5) RETURNING id', [n,d,i,uni2,s])).rows[0].id;
+        const mkLes = async (c,t,co,s) => (await client.query('INSERT INTO lessons (category_id,title,content,sort_order) VALUES ($1,$2,$3,$4) RETURNING id', [c,t,co,s])).rows[0].id;
+        const mkQz = async (l,q,s) => (await client.query('INSERT INTO quizzes (lesson_id,question,sort_order) VALUES ($1,$2,$3) RETURNING id', [l,q,s])).rows[0].id;
+        const mkCh = async (q,t,c,s) => client.query('INSERT INTO quiz_choices (quiz_id,choice_text,is_correct,sort_order) VALUES ($1,$2,$3,$4)', [q,t,!!c,s]);
+        const mkAct = async (l,t,ti,d,s) => (await client.query('INSERT INTO activities (lesson_id,activity_type,title,description,sort_order) VALUES ($1,$2,$3,$4,$5) RETURNING id', [l,t,ti,d,s])).rows[0].id;
+        const mkCode = async (a,inst,starter,exp,hint,diff,s) => client.query('INSERT INTO activity_code_challenges (activity_id,instructions,starter_code,expected_output,hint,difficulty,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7)', [a,inst,starter,exp,hint,diff,s]);
+        const mkTF = async (a,stmt,istrue,expl,s) => client.query('INSERT INTO activity_truefalse_items (activity_id,statement,is_true,explanation,sort_order) VALUES ($1,$2,$3,$4,$5)', [a,stmt,!!istrue,expl,s]);
+        const mkMatch = async (a,term,def,s) => client.query('INSERT INTO activity_match_pairs (activity_id,term,definition,sort_order) VALUES ($1,$2,$3,$4)', [a,term,def,s]);
+        const mkSort = async (a,content,pos) => client.query('INSERT INTO activity_sort_items (activity_id,content,correct_position) VALUES ($1,$2,$3)', [a,content,pos]);
+        const mkMini = async (l,kind,ti,d,s) => client.query("INSERT INTO activities (lesson_id,activity_type,title,description,game_kind,sort_order) VALUES ($1,'minigame',$2,$3,$4,$5)", [l,ti,d,kind,s]);
+
+        // ===== WORLD 1: HELLO PYTHON =====
+        const w1 = await mkCat('Hello Python!', 'Learn to make Python talk with print()', '👋', 1);
+
+        let l = await mkLes(w1, 'Meet Python', 'Python is a coding language that even beginners can learn! It reads almost like English.\n\nThe first thing to learn: print() — it makes Python show text on the screen.', 1);
+        let a = await mkAct(l, 'match', 'Python Vocab!', 'Match each word to what it means', 1);
+        await mkMatch(a,'print()','Shows text on the screen',1);
+        await mkMatch(a,'Python','A coding language',2);
+        await mkMatch(a,'code','Instructions for a computer',3);
+        await mkMatch(a,'string','Text inside quotes',4);
+        let q = await mkQz(l, 'What does print() do?', 1);
+        await mkCh(q,'Shows text on screen',1,1);
+        await mkCh(q,'Prints paper',0,2);
+        await mkCh(q,'Deletes code',0,3);
+
+        l = await mkLes(w1, 'Your First print()', 'Time to write code! print("Hello!") makes Python say Hello!\n\nAnything inside the quotes is what Python will show.', 2);
+        a = await mkAct(l, 'codechallenge', 'Say Hello!', 'Make Python speak!', 1);
+        await mkCode(a,'EASY: Replace <TYPE HERE> with "Hello!"','print(<TYPE HERE>)\n','Hello!\n','Type "Hello!" with the quotes','easy',1);
+        await mkCode(a,'MEDIUM: Write a print statement that says Hello!','# Write your print below:\n<TYPE HERE>\n','Hello!\n','It looks like: print("Hello!")','medium',2);
+        await mkCode(a,'HARD: Make Python say Hello! any way you want','','Hello!\n','Use print() with "Hello!" inside','hard',3);
+        q = await mkQz(l, 'Which shows text in Python?', 1);
+        await mkCh(q,'say("hi")',0,1);
+        await mkCh(q,'print("hi")',1,2);
+        await mkCh(q,'show("hi")',0,3);
+
+        l = await mkLes(w1, 'Print More Things!', 'You can print anything! Numbers, words, even emoji descriptions.\n\nTry printing multiple lines — each print() goes on a new line.', 3);
+        a = await mkAct(l, 'codechallenge', 'Print Party!', 'Print multiple things!', 1);
+        await mkCode(a,'EASY: Replace <TYPE HERE> with a number','print(<TYPE HERE>)\n','42\n','Just type 42','easy',1);
+        await mkCode(a,'MEDIUM: Print "I love coding" on one line','# Print the sentence below:\n<TYPE HERE>\n','I love coding\n','Use print("I love coding")','medium',2);
+        await mkCode(a,'HARD: Print these 3 lines: Hello / I am learning / Python is fun','','Hello\nI am learning\nPython is fun\n','Use three separate print() statements','hard',3);
+        q = await mkQz(l, 'How many lines does print("A")\\nprint("B") show?', 1);
+        await mkCh(q,'1 line',0,1);
+        await mkCh(q,'2 lines',1,2);
+        await mkCh(q,'3 lines',0,3);
+
+        await mkMini(w1,'bug_squash','🎁 Bonus: Bug Squash!','Squash bugs as fast as you can!',4);
+
+        // ===== WORLD 2: VARIABLES =====
+        const w2 = await mkCat('Variables', 'Store and use information with named boxes!', '📦', 2);
+
+        l = await mkLes(w2, 'What is a Variable?', 'A variable is like a labeled box. You put info in, and use the label to find it later!\n\nname = "Alex" puts "Alex" in a box called name.', 1);
+        a = await mkAct(l, 'truefalse', 'Variable True or False!', 'Test your variable knowledge!', 1);
+        await mkTF(a,'A variable stores information',1,'Yes! Variables hold data.',1);
+        await mkTF(a,'Variable names can have spaces',0,'Nope! Use underscores like my_name.',2);
+        await mkTF(a,'You can change a variable later',1,'Yes! Just assign a new value.',3);
+        await mkTF(a,'name = "Jo" stores the number 10',0,'It stores the text "Jo"!',4);
+        q = await mkQz(l, 'What is a variable?', 1);
+        await mkCh(q,'A box that stores info',1,1);
+        await mkCh(q,'A math equation',0,2);
+        await mkCh(q,'A type of computer',0,3);
+
+        l = await mkLes(w2, 'Text Variables', 'Text in Python is called a "string". Always put strings in quotes!\n\nname = "Alex"\nprint(name) shows Alex', 2);
+        a = await mkAct(l, 'codechallenge', 'String Practice!', 'Create text variables!', 1);
+        await mkCode(a,'EASY: Set name to "Alex"','name = <TYPE HERE>\nprint(name)\n','Alex\n','Type "Alex" with quotes','easy',1);
+        await mkCode(a,'MEDIUM: Create a variable called food that stores "pizza" and print it','<TYPE HERE>\nprint(food)\n','pizza\n','Write: food = "pizza"','medium',2);
+        await mkCode(a,'HARD: Create two variables (first and last name) and print them together','','Alex Smith\n','Use + to combine: print(first + " " + last)','hard',3);
+        q = await mkQz(l, 'Text in Python is called a...', 1);
+        await mkCh(q,'number',0,1);
+        await mkCh(q,'string',1,2);
+        await mkCh(q,'variable',0,3);
+
+        l = await mkLes(w2, 'Number Variables', 'Variables can hold numbers too! No quotes needed for numbers.\n\nage = 10\nscore = 0\nYou can do math with number variables!', 3);
+        a = await mkAct(l, 'codechallenge', 'Number Crunch!', 'Work with number variables!', 1);
+        await mkCode(a,'EASY: Set score to 100','score = <TYPE HERE>\nprint("Score:", score)\n','Score: 100\n','Just type 100','easy',1);
+        await mkCode(a,'MEDIUM: Create age = 10 and print it','<TYPE HERE>\nprint("Age:", age)\n','Age: 10\n','Write: age = 10','medium',2);
+        await mkCode(a,'HARD: Create two number variables and print their sum','','15\n','Try: a = 10, b = 5, print(a + b)','hard',3);
+        q = await mkQz(l, 'Do numbers need quotes?', 1);
+        await mkCh(q,'Yes always',0,1);
+        await mkCh(q,'No, only text needs quotes',1,2);
+        await mkCh(q,'Only big numbers',0,3);
+
+        l = await mkLes(w2, 'Changing Variables', 'You can change a variable anytime by assigning a new value!\n\ncolor = "red"\ncolor = "blue"  # now color is blue\nThe old value is replaced.', 4);
+        a = await mkAct(l, 'codechallenge', 'Change It Up!', 'Practice changing variables!', 1);
+        await mkCode(a,'EASY: Change animal to "cat"','animal = "dog"\nanimal = <TYPE HERE>\nprint(animal)\n','cat\n','Type "cat" with quotes','easy',1);
+        await mkCode(a,'MEDIUM: Set x to 5 then change it to 10 and print it','x = 5\n<TYPE HERE>\nprint(x)\n','10\n','Write: x = 10','medium',2);
+        await mkCode(a,'HARD: Create a variable, change it 3 times, print the final value as "blue"','','blue\n','The last assignment wins!','hard',3);
+        q = await mkQz(l, 'What happens when you change a variable?', 1);
+        await mkCh(q,'It keeps both values',0,1);
+        await mkCh(q,'The old value is replaced',1,2);
+        await mkCh(q,'It creates a new variable',0,3);
+
+        await mkMini(w2,'train_ai','🎁 Bonus: Train the AI!','Sort things into the right categories!',5);
+
+        // ===== WORLD 3: LOOPS =====
+        const w3 = await mkCat('Loops', 'Make Python repeat things for you!', '🔄', 3);
+
+        l = await mkLes(w3, 'What is a Loop?', 'A loop repeats code. Instead of writing print("Hi") 100 times, use a loop!\n\nfor i in range(3): makes the next line happen 3 times.', 1);
+        a = await mkAct(l, 'sort', 'Loop Steps!', 'Put the loop code in the right order!', 1);
+        await mkSort(a,'for i in range(3):',1);
+        await mkSort(a,'    print("Hello!")',2);
+        await mkSort(a,'print("Done!")',3);
+        a = await mkAct(l, 'truefalse', 'Loop Facts!', 'True or false about loops?', 2);
+        await mkTF(a,'A loop repeats code',1,'Yes! That is exactly what loops do.',1);
+        await mkTF(a,'Loops make code longer',0,'They make it SHORTER!',2);
+        await mkTF(a,'range(5) means repeat 5 times',1,'Correct!',3);
+        await mkTF(a,'You can only loop once',0,'You can loop any number of times!',4);
+        q = await mkQz(l, 'What does a loop do?', 1);
+        await mkCh(q,'Repeats code',1,1);
+        await mkCh(q,'Deletes code',0,2);
+        await mkCh(q,'Saves a file',0,3);
+
+        l = await mkLes(w3, 'For Loops', 'for i in range(N): repeats N times.\n\nrange(3) = 0, 1, 2 (three numbers)\nrange(1, 5) = 1, 2, 3, 4 (starts at 1, stops before 5)', 2);
+        a = await mkAct(l, 'codechallenge', 'Loop It!', 'Make Python repeat!', 1);
+        await mkCode(a,'EASY: Make it print Hi! exactly 3 times','for i in range(<TYPE HERE>):\n    print("Hi!")\n','Hi!\nHi!\nHi!\n','Type 3','easy',1);
+        await mkCode(a,'MEDIUM: Write a loop that prints "Go!" 4 times','<TYPE HERE>:\n    print("Go!")\n','Go!\nGo!\nGo!\nGo!\n','Write: for i in range(4)','medium',2);
+        await mkCode(a,'HARD: Print the numbers 1, 2, 3, 4, 5 (one per line)','','1\n2\n3\n4\n5\n','Try: for i in range(1, 6): print(i)','hard',3);
+        q = await mkQz(l, 'What does range(4) give you?', 1);
+        await mkCh(q,'1, 2, 3, 4',0,1);
+        await mkCh(q,'0, 1, 2, 3',1,2);
+        await mkCh(q,'4, 4, 4, 4',0,3);
+
+        l = await mkLes(w3, 'Loop Patterns', 'Loops can build patterns! Try printing shapes with loops.\n\nYou can use string multiplication: "* " * 3 gives "* * * "', 3);
+        a = await mkAct(l, 'codechallenge', 'Pattern Maker!', 'Use loops to make patterns!', 1);
+        await mkCode(a,'EASY: Make it print *** (three stars)','print("*" * <TYPE HERE>)\n','***\n','Type 3','easy',1);
+        await mkCode(a,'MEDIUM: Use a loop to print 3 rows of ***','<TYPE HERE>:\n    print("***")\n','***\n***\n***\n','Write: for i in range(3)','medium',2);
+        await mkCode(a,'HARD: Print a triangle: *, **, *** (each on its own line)','','*\n**\n***\n','Try: for i in range(1, 4): print("*" * i)','hard',3);
+        q = await mkQz(l, 'What does "*" * 3 give you?', 1);
+        await mkCh(q,'3',0,1);
+        await mkCh(q,'***',1,2);
+        await mkCh(q,'* 3',0,3);
+
+        await mkMini(w3,'catch_ai','🎁 Bonus: Catch the AI!','Tap AI things before they fall!',4);
+
+        // ===== WORLD 4: IF/ELSE =====
+        const w4 = await mkCat('If / Else', 'Teach Python to make decisions!', '🔀', 4);
+
+        l = await mkLes(w4, 'Making Choices', 'Computers can decide! if checks a condition.\n\nif age >= 10: means "only do this when age is 10 or more."\n\nThe code underneath only runs if the condition is True.', 1);
+        a = await mkAct(l, 'match', 'Condition Match!', 'Match the condition to what it checks!', 1);
+        await mkMatch(a,'age >= 10','Age is 10 or more',1);
+        await mkMatch(a,'score == 100','Score is exactly 100',2);
+        await mkMatch(a,'name == "Jo"','Name is Jo',3);
+        await mkMatch(a,'x < 5','x is less than 5',4);
+        q = await mkQz(l, 'What does if do?', 1);
+        await mkCh(q,'Runs code only when a condition is true',1,1);
+        await mkCh(q,'Deletes a variable',0,2);
+        await mkCh(q,'Creates a loop',0,3);
+
+        l = await mkLes(w4, 'If and Else', 'else runs when the if condition is False.\n\nif sunny: go outside\nelse: stay inside\n\nOne path always runs!', 2);
+        a = await mkAct(l, 'codechallenge', 'Choose a Path!', 'Make Python decide!', 1);
+        await mkCode(a,'EASY: Set weather to "sunny" so it prints Go outside!','weather = <TYPE HERE>\nif weather == "sunny":\n    print("Go outside!")\nelse:\n    print("Stay inside!")\n','Go outside!\n','Type "sunny" with quotes','easy',1);
+        await mkCode(a,'MEDIUM: Write the if line that checks if score >= 100','score = 200\n<TYPE HERE>:\n    print("You win!")\nelse:\n    print("Try again!")\n','You win!\n','Write: if score >= 100','medium',2);
+        await mkCode(a,'HARD: Write code that prints "Even" if a number is even, "Odd" otherwise','','Even\n','Try: n = 4, if n % 2 == 0: print("Even") else: print("Odd")','hard',3);
+        q = await mkQz(l, 'When does else run?', 1);
+        await mkCh(q,'When if is True',0,1);
+        await mkCh(q,'When if is False',1,2);
+        await mkCh(q,'Always',0,3);
+
+        l = await mkLes(w4, 'Elif: More Choices', 'elif means "else if" — it checks another condition.\n\nif temp > 30: hot\nelif temp > 20: warm\nelse: cold\n\nPython checks each one in order and runs the first that is True.', 3);
+        a = await mkAct(l, 'codechallenge', 'Multiple Paths!', 'Use elif for more choices!', 1);
+        await mkCode(a,'EASY: Set temp to 25 so it prints Nice day!','temp = <TYPE HERE>\nif temp > 30:\n    print("Too hot!")\nelif temp > 15:\n    print("Nice day!")\nelse:\n    print("Too cold!")\n','Nice day!\n','Any number 16-30 works','easy',1);
+        await mkCode(a,'MEDIUM: Write the elif line that checks if grade >= 70','grade = 80\nif grade >= 90:\n    print("A")\n<TYPE HERE>:\n    print("B")\nelse:\n    print("C")\n','B\n','Write: elif grade >= 70','medium',2);
+        await mkCode(a,'HARD: Write code that prints "big" for numbers >= 100, "medium" for >= 50, "small" otherwise. Use number = 75.','','medium\n','Use if/elif/else with the number 75','hard',3);
+        q = await mkQz(l, 'What does elif mean?', 1);
+        await mkCh(q,'else if — another condition to check',1,1);
+        await mkCh(q,'elephant if',0,2);
+        await mkCh(q,'end loop',0,3);
+
+        await mkMini(w4,'pick_tool','🎁 Bonus: Pick the Tool!','Help the agent pick the right tool!',4);
+
+        await client.query('COMMIT');
+        console.log('✓ Created 4 deep Python worlds');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        console.warn('Python restructure failed:', e.message);
+      } finally {
+        client.release();
+      }
+    }
+  } catch (e) { console.warn('Python restructure check:', e.message); }
+
   // ---------- MIGRATION: REDESIGN CODE CHALLENGES INTO 3 DIFFICULTY LEVELS ----------
   try {
     const usesNewFormat = (await pool.query("SELECT COUNT(*)::int AS c FROM activity_code_challenges WHERE starter_code LIKE '%TYPE HERE%'")).rows[0].c > 0;
