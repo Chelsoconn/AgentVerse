@@ -388,23 +388,33 @@ async function init() {
       // Rename Universe 2
       await pool.query("UPDATE universes SET name = 'Python Basics', description = 'Master Python one step at a time!', icon = '🐍' WHERE id = $1", [uni2]);
 
-      // Delete old Python Coding category and all its content (cascades)
+      // Delete old Python Coding category and all its content
+      // Must clean user data first due to FK constraints
       const oldLessons = (await pool.query("SELECT id FROM lessons WHERE category_id = $1", [oldPython.id])).rows;
-      for (const l of oldLessons) {
-        const oldActs = (await pool.query("SELECT id FROM activities WHERE lesson_id = $1", [l.id])).rows;
-        for (const act of oldActs) {
-          await pool.query("DELETE FROM activity_code_challenges WHERE activity_id = $1", [act.id]);
-          await pool.query("DELETE FROM activity_match_pairs WHERE activity_id = $1", [act.id]);
-          await pool.query("DELETE FROM activity_sort_items WHERE activity_id = $1", [act.id]);
-          await pool.query("DELETE FROM activity_truefalse_items WHERE activity_id = $1", [act.id]);
-          await pool.query("DELETE FROM activity_blanks WHERE activity_id = $1", [act.id]);
-          await pool.query("DELETE FROM activity_blank_options WHERE blank_id IN (SELECT id FROM activity_blanks WHERE activity_id = $1)", [act.id]);
+      const oldLessonIds = oldLessons.map(l => l.id);
+      if (oldLessonIds.length > 0) {
+        // Clean user progress/answers referencing these lessons
+        const oldQuizIds = (await pool.query("SELECT id FROM quizzes WHERE lesson_id = ANY($1::int[])", [oldLessonIds])).rows.map(q => q.id);
+        if (oldQuizIds.length > 0) {
+          await pool.query("DELETE FROM user_quiz_answers WHERE quiz_id = ANY($1::int[])", [oldQuizIds]);
+          await pool.query("DELETE FROM quiz_choices WHERE quiz_id = ANY($1::int[])", [oldQuizIds]);
+          await pool.query("DELETE FROM quizzes WHERE id = ANY($1::int[])", [oldQuizIds]);
         }
-        await pool.query("DELETE FROM activities WHERE lesson_id = $1", [l.id]);
-        await pool.query("DELETE FROM quiz_choices WHERE quiz_id IN (SELECT id FROM quizzes WHERE lesson_id = $1)", [l.id]);
-        await pool.query("DELETE FROM quizzes WHERE lesson_id = $1", [l.id]);
+        const oldActIds = (await pool.query("SELECT id FROM activities WHERE lesson_id = ANY($1::int[])", [oldLessonIds])).rows.map(a => a.id);
+        if (oldActIds.length > 0) {
+          await pool.query("DELETE FROM user_activity_scores WHERE activity_id = ANY($1::int[])", [oldActIds]);
+          await pool.query("DELETE FROM activity_code_challenges WHERE activity_id = ANY($1::int[])", [oldActIds]);
+          await pool.query("DELETE FROM activity_match_pairs WHERE activity_id = ANY($1::int[])", [oldActIds]);
+          await pool.query("DELETE FROM activity_sort_items WHERE activity_id = ANY($1::int[])", [oldActIds]);
+          await pool.query("DELETE FROM activity_truefalse_items WHERE activity_id = ANY($1::int[])", [oldActIds]);
+          const oldBlankIds = (await pool.query("SELECT id FROM activity_blanks WHERE activity_id = ANY($1::int[])", [oldActIds])).rows.map(b => b.id);
+          if (oldBlankIds.length > 0) await pool.query("DELETE FROM activity_blank_options WHERE blank_id = ANY($1::int[])", [oldBlankIds]);
+          await pool.query("DELETE FROM activity_blanks WHERE activity_id = ANY($1::int[])", [oldActIds]);
+          await pool.query("DELETE FROM activities WHERE id = ANY($1::int[])", [oldActIds]);
+        }
+        await pool.query("DELETE FROM user_lesson_progress WHERE lesson_id = ANY($1::int[])", [oldLessonIds]);
+        await pool.query("DELETE FROM lessons WHERE id = ANY($1::int[])", [oldLessonIds]);
       }
-      await pool.query("DELETE FROM lessons WHERE category_id = $1", [oldPython.id]);
       await pool.query("DELETE FROM categories WHERE id = $1", [oldPython.id]);
 
       // Create 4 new Python worlds
