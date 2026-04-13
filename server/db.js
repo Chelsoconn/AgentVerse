@@ -375,6 +375,8 @@ async function init() {
     const oldPython = (await pool.query("SELECT id FROM categories WHERE name = 'Python Coding'")).rows[0];
     if (oldPython) {
       console.log('Restructuring Python into deep worlds...');
+      // Set admin flag so RLS lets us clean user data
+      await pool.query("SELECT set_config('app.is_admin', 'true', false)");
       const uni2 = (await pool.query("SELECT id FROM universes WHERE sort_order = 2")).rows[0].id;
       // Create Universe 3 for AI+Coding if it doesn't exist
       let uni3 = (await pool.query("SELECT id FROM universes WHERE sort_order = 3")).rows[0];
