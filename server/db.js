@@ -400,12 +400,12 @@ async function init() {
         const w1 = await mkCat('What is a Computer?', 'Discover what computers are and how they work!', '🖥️', 1);
 
         l = await mkLes(w1, 'Computers Are Everywhere', 'A computer is any machine that follows instructions to do a job. They come in all shapes and sizes!\n\nPhones, tablets, game consoles, smart TVs — all computers! Even some refrigerators have tiny computers inside.', 1);
-        a = await mkAct(l, 'match', 'Computer or Not?', 'Which of these are computers?', 1);
-        await mkMatch(a,'📱 Smartphone','Yes, it\'s a computer!',1);
-        await mkMatch(a,'🪑 Wooden Chair','Not a computer',2);
-        await mkMatch(a,'🎮 Nintendo Switch','Yes, it\'s a computer!',3);
-        await mkMatch(a,'📕 Paper Book','Not a computer',4);
-        await mkMatch(a,'🚗 Tesla Car','Yes, it has a computer!',5);
+        a = await mkAct(l, 'truefalse', 'Computer or Not?', 'Is it a computer? Tap TRUE or FALSE!', 1);
+        await mkTF(a,'A smartphone is a computer',1,'Yes! Phones are powerful computers.',1);
+        await mkTF(a,'A wooden chair is a computer',0,'Nope! A chair has no processor.',2);
+        await mkTF(a,'A Nintendo Switch is a computer',1,'Yes! Game consoles are computers.',3);
+        await mkTF(a,'A paper book is a computer',0,'No! Books don\'t run programs.',4);
+        await mkTF(a,'A Tesla car has a computer inside',1,'Yes! Modern cars have computers.',5);
         q = await mkQz(l, 'Which is NOT a computer?', 1);
         await mkCh(q,'A smartphone',0,1);
         await mkCh(q,'A wooden spoon',1,2);
@@ -424,12 +424,12 @@ async function init() {
         await mkCh(q,'The power button',0,3);
 
         l = await mkLes(w1, 'Input and Output', 'Input = what goes INTO the computer (typing, clicking, talking)\nOutput = what comes OUT (screen, sound, printing)\n\nYou give input → the computer processes it → you get output!', 3);
-        a = await mkAct(l, 'match', 'Input or Output?', 'Sort each one!', 1);
-        await mkMatch(a,'⌨️ Typing on keyboard','Input',1);
-        await mkMatch(a,'🖥️ Text on screen','Output',2);
-        await mkMatch(a,'🖱️ Clicking a mouse','Input',3);
-        await mkMatch(a,'🔊 Sound from speakers','Output',4);
-        await mkMatch(a,'🎤 Speaking into mic','Input',5);
+        a = await mkAct(l, 'truefalse', 'Input or Output?', 'INPUT or OUTPUT? TRUE = input, FALSE = output', 1);
+        await mkTF(a,'Typing on a keyboard is INPUT',1,'Yes! You are putting data IN.',1);
+        await mkTF(a,'Text on the screen is INPUT',0,'That\'s OUTPUT — data coming OUT.',2);
+        await mkTF(a,'Clicking a mouse is INPUT',1,'Yes! You are telling the computer what to do.',3);
+        await mkTF(a,'Sound from speakers is INPUT',0,'That\'s OUTPUT — sound coming OUT.',4);
+        await mkTF(a,'Speaking into a mic is INPUT',1,'Correct! Your voice goes IN.',5);
         q = await mkQz(l, 'Typing on a keyboard is...', 1);
         await mkCh(q,'Output',0,1);
         await mkCh(q,'Input',1,2);
