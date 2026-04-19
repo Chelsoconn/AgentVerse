@@ -1604,18 +1604,18 @@ function PromptPracticeGame({ a, t, showXp, showTokens, refreshUser, boom, next 
 }
 
 // ===================== MINI GAMES =====================
-function MiniGame({ a, t, showXp, boom, next }) {
+function MiniGame({ a, t, showXp, showTokens, refreshUser, boom, next }) {
   switch (a.game_kind) {
-    case 'catch_ai': return <CatchAIGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
-    case 'pick_tool': return <PickToolGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
-    case 'bug_squash': return <BugSquashGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
-    case 'train_ai': return <TrainAIGame a={a} t={t} showXp={showXp} boom={boom} next={next}/>;
+    case 'catch_ai': return <CatchAIGame a={a} t={t} showXp={showXp} showTokens={showTokens} refreshUser={refreshUser} boom={boom} next={next}/>;
+    case 'pick_tool': return <PickToolGame a={a} t={t} showXp={showXp} showTokens={showTokens} refreshUser={refreshUser} boom={boom} next={next}/>;
+    case 'bug_squash': return <BugSquashGame a={a} t={t} showXp={showXp} showTokens={showTokens} refreshUser={refreshUser} boom={boom} next={next}/>;
+    case 'train_ai': return <TrainAIGame a={a} t={t} showXp={showXp} showTokens={showTokens} refreshUser={refreshUser} boom={boom} next={next}/>;
     default: return <div>Unknown minigame</div>;
   }
 }
 
 // ----- CATCH THE AI -----
-function CatchAIGame({ a, t, showXp, boom, next }) {
+function CatchAIGame({ a, t, showXp, showTokens, refreshUser, boom, next }) {
   const AI_THINGS = ['🤖','📱','🎮','🚗','🛰️','🎯','💡','🦾'];
   const NOT_AI = ['📕','🪑','🥄','✏️','🥕','🪨','🧦','🎂'];
   const TARGET = 10;
@@ -1709,7 +1709,7 @@ function CatchAIGame({ a, t, showXp, boom, next }) {
 }
 
 // ----- PICK THE TOOL -----
-function PickToolGame({ a, t, showXp, boom, next }) {
+function PickToolGame({ a, t, showXp, showTokens, refreshUser, boom, next }) {
   const ROUNDS = [
     { task: '🍕 Find a pizza recipe', correct: '🌐', tools: ['🌐','🧮','📅','✏️'], labels: { '🌐':'Web Browser','🧮':'Calculator','📅':'Calendar','✏️':'Editor' } },
     { task: '➕ Add 247 + 583', correct: '🧮', tools: ['🌐','🧮','📅','✏️'], labels: { '🌐':'Web Browser','🧮':'Calculator','📅':'Calendar','✏️':'Editor' } },
@@ -1786,7 +1786,7 @@ function PickToolGame({ a, t, showXp, boom, next }) {
 }
 
 // ----- BUG SQUASH -----
-function BugSquashGame({ a, t, showXp, boom, next }) {
+function BugSquashGame({ a, t, showXp, showTokens, refreshUser, boom, next }) {
   const TIME = 30;
   const GRID = 12;
   const [bugs, setBugs] = useState({});
@@ -1874,7 +1874,7 @@ function BugSquashGame({ a, t, showXp, boom, next }) {
 }
 
 // ----- TRAIN THE AI -----
-function TrainAIGame({ a, t, showXp, boom, next }) {
+function TrainAIGame({ a, t, showXp, showTokens, refreshUser, boom, next }) {
   const ITEMS = [
     { e: '🐱', cat: 'Animal' }, { e: '🚗', cat: 'Object' }, { e: '🐶', cat: 'Animal' },
     { e: '⚽', cat: 'Object' }, { e: '🐢', cat: 'Animal' }, { e: '🪑', cat: 'Object' },
