@@ -1122,21 +1122,26 @@ async function init() {
   }
 
   // Seed universes (idempotent)
-  const uniCount = (await pool.query('SELECT COUNT(*)::int AS c FROM universes')).rows[0].c;
-  if (uniCount === 0) {
-    await pool.query("INSERT INTO universes (name, description, icon, sort_order) VALUES ('AI Basics', 'Learn what AI is, how agents work, and how to talk to them!', '🤖', 1)");
-    await pool.query("INSERT INTO universes (name, description, icon, sort_order) VALUES ('Coding Powers', 'Write real Python code and combine it with AI!', '🐍', 2)");
+  const hasAI = (await pool.query("SELECT id FROM universes WHERE name = 'AI Basics'")).rows[0];
+  if (!hasAI) {
+    await pool.query("INSERT INTO universes (name, description, icon, sort_order) VALUES ('AI Basics', 'Learn what AI is, how agents work, and how to talk to them!', '🤖', 1) ON CONFLICT DO NOTHING");
   }
-  const uni1Id = (await pool.query("SELECT id FROM universes WHERE sort_order = 1")).rows[0].id;
-  const uni2Id = (await pool.query("SELECT id FROM universes WHERE sort_order = 2")).rows[0].id;
+  const hasCoding = (await pool.query("SELECT id FROM universes WHERE name = 'Coding Powers'")).rows[0];
+  if (!hasCoding) {
+    await pool.query("INSERT INTO universes (name, description, icon, sort_order) VALUES ('Coding Powers', 'Write real Python code and combine it with AI!', '🐍', 3) ON CONFLICT DO NOTHING");
+  }
+  const uni1Row = (await pool.query("SELECT id FROM universes WHERE name = 'AI Basics'")).rows[0];
+  const uni2Row = (await pool.query("SELECT id FROM universes WHERE name = 'Coding Powers'")).rows[0];
+  const uni1Id = uni1Row ? uni1Row.id : null;
+  const uni2Id = uni2Row ? uni2Row.id : null;
 
   // Migrate: assign existing categories to universes if they haven't been yet
-  await pool.query(`UPDATE categories SET universe_id = $1 WHERE name IN ('What is AI?', 'AI Agents', 'Prompting') AND universe_id IS NULL`, [uni1Id]);
-  await pool.query(`UPDATE categories SET universe_id = $1 WHERE name IN ('Python Coding', 'AI + Coding') AND universe_id IS NULL`, [uni2Id]);
+  if (uni1Id) await pool.query(`UPDATE categories SET universe_id = $1 WHERE name IN ('What is AI?', 'AI Agents', 'Prompting') AND universe_id IS NULL`, [uni1Id]);
+  if (uni2Id) await pool.query(`UPDATE categories SET universe_id = $1 WHERE name IN ('Python Coding', 'AI + Coding') AND universe_id IS NULL`, [uni2Id]);
 
   // Add the Prompting world if it doesn't exist
   const hasPrompting = (await pool.query("SELECT id FROM categories WHERE name = 'Prompting'")).rows[0];
-  if (!hasPrompting) {
+  if (!hasPrompting && uni1Id) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
