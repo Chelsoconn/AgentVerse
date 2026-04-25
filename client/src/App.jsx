@@ -195,7 +195,8 @@ function Auth({ onLogin }) {
       const r = await api('/login','POST',{ username:f.username, password:f.password });
       setBusy(false);
       if (r.error) return setErr(r.error);
-      onLogin(r);
+      const me = await api('/me');
+      onLogin(me?.id ? me : r);
     }
   }
 
@@ -445,7 +446,7 @@ function Main({ user, setUser }) {
         {view==='shop' && <Shop t={effectiveT} user={user} refreshUser={refresh} reloadInventory={loadInventory} hasBonusGame={hasBonusGame}/>}
         {view==='studio' && <GameStudio t={effectiveT} back={()=>setView('home')} user={user} refreshUser={refresh}/>}
         {view==='home' && !universe && <UniverseMap t={effectiveT} pick={setUniverse}/>}
-        {view==='home' && universe && !world && <WorldMap t={effectiveT} universe={universe} pick={enterWorld} openStudio={()=>setView('studio')} back={()=>setUniverse(null)}/>}
+        {view==='home' && universe && !world && <WorldMap t={effectiveT} universe={universe} pick={enterWorld} openStudio={()=>setView('studio')} back={()=>setUniverse(null)} user={user}/>}
         {view==='home' && universe && world && !lesson && <Lessons catId={world.id} t={effectiveT} pick={setLesson} back={()=>setWorld(null)}/>}
         {view==='home' && lesson && <LessonView lesson={lesson} t={effectiveT} back={onLessonExit} showXp={showXp} showTokens={showTokens} boom={boom} refreshUser={refresh}/>}
       </main>
@@ -536,7 +537,7 @@ function UniverseMap({ t, pick }) {
 }
 
 // ===================== ADVENTURE MAP (inside a universe) =====================
-function WorldMap({ t, universe, pick, openStudio, back }) {
+function WorldMap({ t, universe, pick, openStudio, back, user }) {
   const [cats, setCats] = useState([]);
   const [gsStatus, setGsStatus] = useState(null);
   useEffect(() => {
@@ -550,6 +551,8 @@ function WorldMap({ t, universe, pick, openStudio, back }) {
   }, [universe.id]);
 
   const allDone = cats.length > 0 && cats.every(c => c.isComplete);
+  const hasCredits = (user?.game_credits ?? 0) > 0;
+  const studioOpen = allDone || hasCredits;
   const totalStops = cats.length + 1; // worlds + game studio stop
 
   return (
@@ -585,16 +588,16 @@ function WorldMap({ t, universe, pick, openStudio, back }) {
             );
           })}
           {cats.length > 0 && (
-            <div className={`stop world-stop stop-${cats.length%2===0?'left':'right'} studio-stop ${allDone?'open current':'locked'}`} onClick={()=>allDone && openStudio()}>
+            <div className={`stop world-stop stop-${cats.length%2===0?'left':'right'} studio-stop ${studioOpen?'open current':'locked'}`} onClick={()=>studioOpen && openStudio()}>
               <div className="stop-marker world-marker studio-marker">
-                {allDone ? (gsStatus?.gameStudioDone ? '🏆' : '🎮') : '🔒'}
+                {studioOpen ? (gsStatus?.gameStudioDone ? '🏆' : '🎮') : '🔒'}
               </div>
               <div className="stop-card world-card">
                 <div className="stop-num">Final Stop</div>
                 <h3>🎮 Game Studio</h3>
                 <p className="world-desc">Build your own game with AI!</p>
                 <span className="stop-badge">
-                  {allDone ? (gsStatus?.gameStudioDone ? '🏆 Complete!' : '✨ Unlocked!') : '🔒 Finish all worlds first'}
+                  {studioOpen ? (gsStatus?.gameStudioDone ? '🏆 Complete!' : '✨ Unlocked!') : '🔒 Finish all worlds first'}
                 </span>
               </div>
             </div>
