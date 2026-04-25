@@ -608,14 +608,13 @@ async function isFullyComplete(uid) {
 app.get('/api/game-studio/status', auth, async (req, res) => {
   try {
     const complete = await isFullyComplete(req.session.userId);
-    const hasCredits = await withUser(req.session.userId, async c =>
-      ((await c.query('SELECT game_credits FROM user_xp WHERE user_id = $1', [req.session.userId])).rows[0]?.game_credits ?? 0) > 0
-    );
-    const unlocked = complete || hasCredits;
-    const sessions = unlocked ? await withUser(req.session.userId, async c =>
-      (await c.query('SELECT s.id, s.title, s.created_at, COUNT(i.id)::int AS iteration_count FROM user_game_sessions s LEFT JOIN user_game_iterations i ON i.session_id = s.id GROUP BY s.id ORDER BY s.created_at DESC')).rows
-    ) : [];
-    res.json({ unlocked, sessions });
+    const userData = await withUser(req.session.userId, async c => {
+      const xr = (await c.query('SELECT game_credits FROM user_xp WHERE user_id = $1', [req.session.userId])).rows[0];
+      const sessions = (await c.query('SELECT s.id, s.title, s.created_at, COUNT(i.id)::int AS iteration_count FROM user_game_sessions s LEFT JOIN user_game_iterations i ON i.session_id = s.id WHERE s.user_id = $1 GROUP BY s.id ORDER BY s.created_at DESC', [req.session.userId])).rows;
+      return { credits: xr?.game_credits ?? 0, sessions };
+    });
+    const unlocked = complete || userData.credits > 0 || userData.sessions.length > 0;
+    res.json({ unlocked, sessions: unlocked ? userData.sessions : [] });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -725,11 +724,11 @@ app.post('/api/game-studio/iterate', auth, async (req, res) => {
   try {
     const { sessionId, prompt } = req.body;
     if (!sessionId || !prompt || prompt.length > 500) return res.status(400).json({ error: 'Invalid prompt' });
-    const complete = await isFullyComplete(req.session.userId);
-    const hasCredits = await withUser(req.session.userId, async c =>
-      ((await c.query('SELECT game_credits FROM user_xp WHERE user_id = $1', [req.session.userId])).rows[0]?.game_credits ?? 0) > 0
+    // Verify the session belongs to this user
+    const owns = await withUser(req.session.userId, async c =>
+      (await c.query('SELECT id FROM user_game_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.session.userId])).rows[0]
     );
-    if (!complete && !hasCredits) return res.status(403).json({ error: 'Locked' });
+    if (!owns) return res.status(403).json({ error: 'Locked' });
 
     // Server-side safety check
     const safety = checkPromptSafety(prompt);
